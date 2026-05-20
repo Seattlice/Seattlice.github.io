@@ -78,6 +78,326 @@
       <div class="outer">
         <section id="main">
   
+    <article id="post-fpga-nvme-host-03-architecture" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/20/fpga-nvme-host-03-architecture/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T15:55:00.000Z" itemprop="datePublished">2026-05-20</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="p-name article-title" href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <p>本章从工程结构角度展开，说明 <code>top_v</code>、<code>ssd_top</code>、<code>SSD_ctl</code> 以及 Command、Queue、PRP、Memory、TLP route 等模块之间的关系。</p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#3-1-%E6%9E%B6%E6%9E%84%E6%A6%82%E8%A7%88">3.1 架构概览</a></li>
+<li><a href="#3-2-%E9%A1%B6%E5%B1%82%E6%95%B0%E6%8D%AE%E6%B5%81">3.2 顶层数据流</a></li>
+<li><a href="#3-3-%E6%80%BB%E4%BD%93%E5%B1%82%E7%BA%A7">3.3 总体层级</a></li>
+<li><a href="#3-4-SSDctl-%E5%86%85%E9%83%A8%E6%95%B0%E6%8D%AE%E6%B5%81">3.4 SSD_ctl 内部数据流</a></li>
+<li><a href="#3-5-PCIe-TLP-%E6%96%B9%E5%90%91%E4%B8%8E%E7%B3%BB%E7%BB%9F%E8%81%8C%E8%B4%A3">3.5 PCIe TLP 方向与系统职责</a></li>
+<li><a href="#3-6-%E4%BB%8E%E5%B7%A5%E7%A8%8B%E8%A7%86%E8%A7%92%E5%88%92%E5%88%86%E6%95%B0%E6%8D%AE%E9%9D%A2">3.6 从工程视角划分数据面</a><ul>
+<li><a href="#3-6-1-PCIe-TLP-%E9%9D%A2">3.6.1 PCIe TLP 面</a></li>
+<li><a href="#3-6-2-%E6%8E%A7%E5%88%B6%E9%9D%A2">3.6.2 控制面</a></li>
+<li><a href="#3-6-3-%E5%88%9D%E5%A7%8B%E5%8C%96%E9%9D%A2">3.6.3 初始化面</a></li>
+<li><a href="#3-6-4-%E5%91%BD%E4%BB%A4%E9%9D%A2">3.6.4 命令面</a></li>
+<li><a href="#3-6-5-%E9%98%9F%E5%88%97%E9%9D%A2">3.6.5 队列面</a></li>
+<li><a href="#3-6-6-PRP-%E4%B8%8E%E6%95%B0%E6%8D%AE%E7%BC%93%E5%AD%98%E9%9D%A2">3.6.6 PRP 与数据缓存面</a></li>
+</ul>
+</li>
+<li><a href="#3-7-FPGA-%E4%B8%8E-SSD-%E7%9A%84%E8%BF%90%E8%A1%8C%E6%97%B6%E4%BA%A4%E4%BA%92%E6%B5%81%E7%A8%8B">3.7 FPGA 与 SSD 的运行时交互流程</a><ul>
+<li><a href="#3-7-1-%E5%91%BD%E4%BB%A4%E6%8F%90%E4%BA%A4">3.7.1 命令提交</a></li>
+<li><a href="#3-7-2-SSD-%E8%8E%B7%E5%8F%96%E5%91%BD%E4%BB%A4">3.7.2 SSD 获取命令</a></li>
+<li><a href="#3-7-3-%E6%95%B0%E6%8D%AE%E4%BC%A0%E8%BE%93">3.7.3 数据传输</a></li>
+<li><a href="#3-7-4-%E5%91%BD%E4%BB%A4%E5%AE%8C%E6%88%90">3.7.4 命令完成</a></li>
+</ul>
+</li>
+<li><a href="#3-8-%E5%BD%93%E5%89%8D%E5%85%B3%E9%94%AE%E5%9C%B0%E5%9D%80%E7%AA%97%E5%8F%A3">3.8 当前关键地址窗口</a></li>
+<li><a href="#3-9-%E5%BD%93%E5%89%8D%E6%95%B0%E6%8D%AE%E6%B5%81%E6%80%BB%E8%A7%88">3.9 当前数据流总览</a></li>
+<li><a href="#3-10-%E5%A4%96%E9%83%A8%E6%8E%A7%E5%88%B6%E4%B8%8E%E6%B5%8B%E8%AF%95%E5%85%A5%E5%8F%A3">3.10 外部控制与测试入口</a></li>
+<li><a href="#3-11-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">3.11 章节总结</a></li>
+</ul>
+<h2 id="3-1-架构概览"><a href="#3-1-架构概览" class="headerlink" title="3.1 架构概览"></a>3.1 架构概览</h2><p>这一章主要说明当前 SSD 控制器在工程中的位置，以及各个模块之间的数据流关系。前两章已经说明了 PCIe&#x2F;NVMe 的基本概念，这里开始从实际工程结构展开。</p>
+<p>当前工程可以理解成三层：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">top_v</span><br><span class="line">    板级顶层，接 PCIe 物理引脚、VIO、ILA 和测试状态机</span><br><span class="line"></span><br><span class="line">ssd_top</span><br><span class="line">    SSD 控制器封装层，把 PCIe IP、初始化逻辑、SSD_ctl 和测试接口接起来</span><br><span class="line"></span><br><span class="line">SSD_ctl</span><br><span class="line">    NVMe host control 核心顶层，内部包含 AXI-Lite、PRP、Command、Queue、Memory、TLP route</span><br></pre></td></tr></table></figure>
+
+<p>系统详细架构框图如下：</p>
+<p><img src="/images/nvme-host/3-architecture-overview.png" alt="系统详细架构框图"></p>
+<p>这一张图里需要先看清楚的关系是：FPGA 不是把 SSD 当成一个普通 FIFO 去写，而是作为 PCIe Root Port 建立 NVMe Host 逻辑。命令、队列、PRP 和数据缓存都位于 FPGA 侧，SSD 在执行命令时会反过来通过 PCIe 访问 FPGA 暴露出来的地址窗口。</p>
+<h2 id="3-2-顶层数据流"><a href="#3-2-顶层数据流" class="headerlink" title="3.2 顶层数据流"></a>3.2 顶层数据流</h2><p>从顶层看，系统里有六个主要对象：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">flowchart LR</span><br><span class="line">    SSD[&quot;NVMe SSD / PCIe link&quot;]</span><br><span class="line">    PCIE[&quot;pcie_us\npcie3_ultrascale_0 + pcie_dma_if\nAXIS RQ/RC/CQ/CC &lt;-&gt; internal TLP&quot;]</span><br><span class="line">    SSDCTL[&quot;SSD_ctl\nmain NVMe host control&quot;]</span><br><span class="line">    INIT[&quot;nvme_command_ctl\nadmin queue init command source&quot;]</span><br><span class="line">    AXIL[&quot;AXI-Lite regs / ext_cmd_desc\naxi_lite_ctl + cmd_source_mux&quot;]</span><br><span class="line">    RWTEST[&quot;ssd_rw_test_ctrl / VIO\noptional test traffic&quot;]</span><br><span class="line">    EXTRAM[&quot;external AXI memory window\nRD/WR buffer RAM&quot;]</span><br><span class="line"></span><br><span class="line">    SSD &lt;--&gt; PCIE</span><br><span class="line">    PCIE -- &quot;CQ: SSD MemRd/MemWr to FPGA address windows&quot; --&gt; SSDCTL</span><br><span class="line">    SSDCTL -- &quot;CC: completions for queue/mem/PRP reads&quot; --&gt; PCIE</span><br><span class="line">    SSDCTL -- &quot;RQ: outbound writes/doorbells/queue requests&quot; --&gt; PCIE</span><br><span class="line">    PCIE -. &quot;RC completions: currently not consumed in SSD_ctl runtime data path&quot; .-&gt; SSDCTL</span><br><span class="line"></span><br><span class="line">    INIT -- &quot;legacy admin commands before queue_init_done&quot; --&gt; SSDCTL</span><br><span class="line">    AXIL -- &quot;runtime command/config source&quot; --&gt; SSDCTL</span><br><span class="line">    RWTEST -- &quot;AXI-Lite command writes + memory fill/check&quot; --&gt; AXIL</span><br><span class="line">    RWTEST &lt;--&gt; EXTRAM</span><br><span class="line">    SSDCTL &lt;--&gt; EXTRAM</span><br></pre></td></tr></table></figure>
+
+<p>这里有几个职责关系需要先说明清楚：</p>
+<ul>
+<li><code>pcie_us</code> 负责 Xilinx PCIe IP、Alex Forencich PCIe 适配层、枚举和基础 NVMe 初始化路径。</li>
+<li><code>SSD_ctl</code> 负责运行时 NVMe command、queue、PRP、memory window 和 TLP route。</li>
+<li><code>nvme_command_ctl</code> 主要提供初始化阶段的 Admin 命令来源。</li>
+<li><code>axi_lite_ctl</code> 提供运行时软件&#x2F;测试侧命令入口和状态寄存器。</li>
+<li><code>ssd_rw_test_ctrl</code> 是板级测试状态机，用 VIO 触发 16KB 写读闭环。</li>
+<li>external AXI memory window 是 FPGA 侧可被 SSD 访问的数据缓存窗口。</li>
+</ul>
+<p>当前 <code>SSD_ctl</code> 运行时主数据路径主要围绕 <code>RQ/CQ/CC</code> 展开。<code>RC</code> 仍然是 PCIe requester completion 方向，但枚举和基础初始化相关的 completion 主要在 <code>pcie_us</code> 内部路径处理，<code>SSD_ctl</code> 本身不消费运行时 RC completion。</p>
+<h2 id="3-3-总体层级"><a href="#3-3-总体层级" class="headerlink" title="3.3 总体层级"></a>3.3 总体层级</h2><p>当前工程主层级可以按下面理解：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">top_v</span><br><span class="line">├── vio_rw_test</span><br><span class="line">├── ssd_rw_test_ctrl</span><br><span class="line">└── ssd_top</span><br><span class="line">    ├── pcie_us</span><br><span class="line">    │   └── pcie3_ultrascale_0 + pcie_dma_if + pcie_us_if</span><br><span class="line">    ├── nvme_command_ctl</span><br><span class="line">    └── SSD_ctl</span><br><span class="line">        ├── axi_lite_ctl</span><br><span class="line">        ├── prp_ctl</span><br><span class="line">        ├── command_ctl</span><br><span class="line">        ├── nvme_queue_ctl</span><br><span class="line">        ├── pcie_memory_clt_top</span><br><span class="line">        └── SSD_pcie_us</span><br><span class="line">            ├── RQ_round_robin</span><br><span class="line">            ├── CQ_route</span><br><span class="line">            └── CC_round_robin</span><br></pre></td></tr></table></figure>
+
+<p><code>top_v</code> 是上板顶层，主要做三件事：</p>
+<ul>
+<li>接入 PCIe 物理引脚和参考时钟。</li>
+<li>例化 <code>ssd_top</code>，得到完整 SSD 控制器。</li>
+<li>例化 <code>ssd_rw_test_ctrl</code> 和 VIO，用于进行板级测试。</li>
+</ul>
+<p><code>ssd_top</code> 是 SSD 控制器封装层，负责把 PCIe IP、初始化逻辑、主控制器和 AXI&#x2F;AXIL 接口接起来。</p>
+<p><code>SSD_ctl</code> 是 NVMe host control 的核心顶层，负责命令、PRP、队列、memory window 和 TLP route。</p>
+<h2 id="3-4-SSD-ctl-内部数据流"><a href="#3-4-SSD-ctl-内部数据流" class="headerlink" title="3.4 SSD_ctl 内部数据流"></a>3.4 SSD_ctl 内部数据流</h2><p><code>SSD_ctl</code> 内部的数据流可以按下面方式理解：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line">flowchart TB</span><br><span class="line">    AXILCTL[&quot;axi_lite_ctl\nregs, cfg, command source select&quot;]</span><br><span class="line">    PRP[&quot;prp_ctl\nPRP calc + PRP list emulation&quot;]</span><br><span class="line">    CMD[&quot;command_ctl\nCID pool + command_construct + record&quot;]</span><br><span class="line">    QUEUE[&quot;nvme_queue_ctl\nASQ/ACQ + IOSQ/IOCQ queue logic&quot;]</span><br><span class="line">    PCIEAGG[&quot;SSD_pcie_us\nRQ_round_robin + CQ_route + CC_round_robin&quot;]</span><br><span class="line">    MEM[&quot;pcie_memory_clt_top\nPCIe-accessible data buffer&quot;]</span><br><span class="line"></span><br><span class="line">    CFG[&quot;cfg outputs\nmemory_base/window\nprp_base/window/page_size&quot;]</span><br><span class="line">    LEGACY[&quot;legacy init cmd\nfrom nvme_command_ctl&quot;]</span><br><span class="line">    EXT[&quot;AXI-Lite/ext cmd\nfrom regs or ext_cmd_desc&quot;]</span><br><span class="line"></span><br><span class="line">    LEGACY --&gt; AXILCTL</span><br><span class="line">    EXT --&gt; AXILCTL</span><br><span class="line">    AXILCTL -- &quot;cmd_*&quot; --&gt; PRP</span><br><span class="line">    AXILCTL -- &quot;cfg_*&quot; --&gt; CFG</span><br><span class="line">    CFG --&gt; PRP</span><br><span class="line">    CFG --&gt; PCIEAGG</span><br><span class="line">    CFG --&gt; MEM</span><br><span class="line"></span><br><span class="line">    PRP -- &quot;command with PRP1/PRP2 + CID&quot; --&gt; CMD</span><br><span class="line">    CMD -- &quot;NVMe command SQE&quot; --&gt; QUEUE</span><br><span class="line">    CMD -- &quot;CID request/return&quot; --&gt; PRP</span><br><span class="line"></span><br><span class="line">    QUEUE -- &quot;ASQ/ACQ/IOSQ/IOCQ RQ TLPs&quot; --&gt; PCIEAGG</span><br><span class="line">    PCIEAGG -- &quot;CQ routed queue reads/writes&quot; --&gt; QUEUE</span><br><span class="line">    QUEUE -- &quot;queue read completions&quot; --&gt; PCIEAGG</span><br><span class="line"></span><br><span class="line">    PCIEAGG -- &quot;MemWr/MemRd to data buffer&quot; --&gt; MEM</span><br><span class="line">    MEM -- &quot;MemRd completions&quot; --&gt; PCIEAGG</span><br><span class="line"></span><br><span class="line">    PCIEAGG -- &quot;PRP list MemRd&quot; --&gt; PRP</span><br><span class="line">    PRP -- &quot;PRP list completion data&quot; --&gt; PCIEAGG</span><br></pre></td></tr></table></figure>
+
+<p>运行时命令大致经过这条链路：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">AXI-Lite / ext command</span><br><span class="line">-&gt; prp_ctl 计算 PRP1/PRP2，并维护 PRP list 上下文</span><br><span class="line">-&gt; command_ctl 分配 CID，构造 512-bit NVMe SQE，并记录命令上下文</span><br><span class="line">-&gt; nvme_queue_ctl 将 SQE 写入对应 SQ</span><br><span class="line">-&gt; RQ_round_robin 写 SSD doorbell</span><br><span class="line">-&gt; SSD 通过 CQ 读取 SQE / PRP / data</span><br><span class="line">-&gt; FPGA 通过 CC 返回 completion data</span><br><span class="line">-&gt; SSD 写回 CQE</span><br><span class="line">-&gt; queue / command_record 匹配 CID，产生 done/status</span><br></pre></td></tr></table></figure>
+
+<p>这个链路也是后续章节拆分的依据：Command、Queue、PRP、Memory、TLP route 都是围绕这条路径展开。</p>
+<h2 id="3-5-PCIe-TLP-方向与系统职责"><a href="#3-5-PCIe-TLP-方向与系统职责" class="headerlink" title="3.5 PCIe TLP 方向与系统职责"></a>3.5 PCIe TLP 方向与系统职责</h2><p>四条 PCIe AXI-Stream 通路在当前系统中的方向如下：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br></pre></td><td class="code"><pre><span class="line">flowchart LR</span><br><span class="line">    CORE[&quot;Xilinx PCIe core&quot;]</span><br><span class="line">    IF[&quot;pcie_dma_if\ninterface adapters&quot;]</span><br><span class="line">    RQ[&quot;Requester Request\nRQ&quot;]</span><br><span class="line">    RC[&quot;Requester Completion\nRC&quot;]</span><br><span class="line">    CQ[&quot;Completer Request\nCQ&quot;]</span><br><span class="line">    CC[&quot;Completer Completion\nCC&quot;]</span><br><span class="line">    ARB[&quot;SSD_pcie_us&quot;]</span><br><span class="line">    ROUTE[&quot;CQ_route&quot;]</span><br><span class="line">    CCRR[&quot;CC_round_robin&quot;]</span><br><span class="line">    RQRR[&quot;RQ_round_robin&quot;]</span><br><span class="line">    QUEUES[&quot;ASQ/ACQ/IOSQ/IOCQ&quot;]</span><br><span class="line">    MEM[&quot;Memory window&quot;]</span><br><span class="line">    PRP[&quot;PRP list window&quot;]</span><br><span class="line"></span><br><span class="line">    CORE &lt;--&gt; IF</span><br><span class="line">    IF --&gt; CQ</span><br><span class="line">    CQ --&gt; ARB --&gt; ROUTE</span><br><span class="line">    ROUTE --&gt; QUEUES</span><br><span class="line">    ROUTE --&gt; MEM</span><br><span class="line">    ROUTE --&gt; PRP</span><br><span class="line"></span><br><span class="line">    QUEUES --&gt; CCRR</span><br><span class="line">    MEM --&gt; CCRR</span><br><span class="line">    PRP --&gt; CCRR</span><br><span class="line">    CCRR --&gt; CC --&gt; IF --&gt; CORE</span><br><span class="line"></span><br><span class="line">    QUEUES --&gt; RQRR</span><br><span class="line">    RQRR --&gt; RQ --&gt; IF --&gt; CORE</span><br><span class="line"></span><br><span class="line">    CORE --&gt; IF --&gt; RC</span><br><span class="line">    RC -. &quot;not connected to SSD_ctl runtime data path in current ssd_top&quot; .-&gt; ARB</span><br></pre></td></tr></table></figure>
+
+<p>从工程角度看：</p>
+<table>
+<thead>
+<tr>
+<th>通道</th>
+<th>当前职责</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RQ</td>
+<td>FPGA 主动发请求，主要用于枚举、寄存器访问、doorbell 写入</td>
+</tr>
+<tr>
+<td>RC</td>
+<td>返回 FPGA 主动请求的 completion，当前主要在 <code>pcie_us</code> 内部用于枚举和初始化</td>
+</tr>
+<tr>
+<td>CQ</td>
+<td>SSD 主动访问 FPGA 地址空间，包括读 SQE、读 PRP、读数据、写 CQE、写读回数据</td>
+</tr>
+<tr>
+<td>CC</td>
+<td>FPGA 响应 SSD 的 Memory Read，返回 SQE、PRP entry 或 data buffer 内容</td>
+</tr>
+</tbody></table>
+<p>RC 这条路径需要区分清楚：不是系统不用 RC，而是当前 <code>SSD_ctl</code> 运行时主数据路径不直接消费 RC completion。PCIe 枚举和 NVMe 基础初始化仍然需要 RQ&#x2F;RC 完成配置读写和寄存器读取。</p>
+<h2 id="3-6-从工程视角划分数据面"><a href="#3-6-从工程视角划分数据面" class="headerlink" title="3.6 从工程视角划分数据面"></a>3.6 从工程视角划分数据面</h2><p>当前系统可以分成六个面。</p>
+<h3 id="3-6-1-PCIe-TLP-面"><a href="#3-6-1-PCIe-TLP-面" class="headerlink" title="3.6.1 PCIe TLP 面"></a>3.6.1 PCIe TLP 面</h3><p>对应模块：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">pcie_us</span><br><span class="line">pcie_dma_if</span><br><span class="line">pcie_us_if</span><br><span class="line">SSD_pcie_us</span><br><span class="line">RQ_round_robin</span><br><span class="line">CQ_route</span><br><span class="line">CC_round_robin</span><br></pre></td></tr></table></figure>
+
+<p>作用：</p>
+<ul>
+<li>把 Xilinx PCIe IP 的 AXI-Stream <code>RQ/RC/CQ/CC</code> 转成工程内部 TLP 信号。</li>
+<li>对 FPGA 主动发出的请求做 RQ 仲裁。</li>
+<li>对 SSD 发来的 MemRd&#x2F;MemWr 做 CQ 地址路由。</li>
+<li>对 queue&#x2F;memory&#x2F;PRP 返回的 CplD 做 CC 仲裁。</li>
+</ul>
+<h3 id="3-6-2-控制面"><a href="#3-6-2-控制面" class="headerlink" title="3.6.2 控制面"></a>3.6.2 控制面</h3><p>对应模块：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">axi_lite_ctl</span><br><span class="line">cmd_source_mux</span><br><span class="line">ssd_rw_test_ctrl</span><br><span class="line">VIO</span><br></pre></td></tr></table></figure>
+
+<p>作用：</p>
+<ul>
+<li>AXI-Lite 寄存器写入命令参数。</li>
+<li>选择 legacy init command、AXI-Lite command 或外部 command descriptor。</li>
+<li>读取 done&#x2F;error&#x2F;status&#x2F;counter。</li>
+<li>在板级调试时由 VIO 触发 16KB 测试。</li>
+</ul>
+<h3 id="3-6-3-初始化面"><a href="#3-6-3-初始化面" class="headerlink" title="3.6.3 初始化面"></a>3.6.3 初始化面</h3><p>对应模块：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">pcie_us</span><br><span class="line">nvme_command_ctl</span><br><span class="line">ADMIN_queue_init</span><br></pre></td></tr></table></figure>
+
+<p>作用：</p>
+<ul>
+<li><code>pcie_us</code> 内部负责 PCIe 枚举和 NVMe 基础初始化，并输出 <code>init_done/init_error</code>。</li>
+<li><code>nvme_command_ctl</code> 在初始化完成后发出 Admin 队列创建相关命令。</li>
+<li>上层通过 <code>queue_init_done</code> 判断 Admin Queue 和 IO Queue 初始化是否完成。</li>
+</ul>
+<h3 id="3-6-4-命令面"><a href="#3-6-4-命令面" class="headerlink" title="3.6.4 命令面"></a>3.6.4 命令面</h3><p>对应模块：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">prp_ctl</span><br><span class="line">command_ctl</span><br><span class="line">command_construct</span><br><span class="line">command_id_pool</span><br><span class="line">command_record</span><br><span class="line">command_record_round_robin</span><br></pre></td></tr></table></figure>
+
+<p>作用：</p>
+<ul>
+<li><code>prp_ctl</code> 先拿到 command 参数，申请 CID，计算 PRP1&#x2F;PRP2。</li>
+<li><code>command_ctl</code> 生成 512-bit NVMe SQE。</li>
+<li><code>command_record</code> 记录 CID 对应的 queue、opcode、状态和上下文。</li>
+<li>CQE 回来后通过 CID 匹配完成，并释放资源。</li>
+</ul>
+<h3 id="3-6-5-队列面"><a href="#3-6-5-队列面" class="headerlink" title="3.6.5 队列面"></a>3.6.5 队列面</h3><p>对应模块：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">nvme_queue_ctl</span><br><span class="line">QUEUE_ctl</span><br><span class="line">SQ_ctl / CQ_ctl</span><br><span class="line">queue_cmd_dispatch</span><br><span class="line">queue_doorbell_coalesce</span><br><span class="line">queue_cpl_route</span><br></pre></td></tr></table></figure>
+
+<p>作用：</p>
+<ul>
+<li>管理 ASQ&#x2F;ACQ 和 IOSQ&#x2F;IOCQ。</li>
+<li>IO Queue 数量参数为 <code>IO_QUEUE_COUNT = 16</code>。</li>
+<li>Admin SQ&#x2F;CQ 深度为 64，IO SQ 深度为 64，IO CQ 总深度为 1024。</li>
+<li>支持 IO queue enable、dispatch mode、fixed queue id、queue weight。</li>
+<li>负责 SQ doorbell 和 CQ head doorbell。</li>
+</ul>
+<h3 id="3-6-6-PRP-与数据缓存面"><a href="#3-6-6-PRP-与数据缓存面" class="headerlink" title="3.6.6 PRP 与数据缓存面"></a>3.6.6 PRP 与数据缓存面</h3><p>对应模块：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">prp_ctl</span><br><span class="line">prp_core_calc</span><br><span class="line">prp_list_ctx</span><br><span class="line">prp_cc_tlp</span><br><span class="line">pcie_memory_clt_top</span><br><span class="line">AXI RAM / external AXI memory window</span><br></pre></td></tr></table></figure>
+
+<p>作用：</p>
+<ul>
+<li>PRP 模块生成 PRP1&#x2F;PRP2，并在 SSD 读取 PRP List 时返回对应 page 地址。</li>
+<li>Memory 模块响应 SSD 对 FPGA memory window 的 MemRd&#x2F;MemWr。</li>
+<li>外部 AXI4 可以直接写入或读取这片 memory window。</li>
+</ul>
+<h2 id="3-7-FPGA-与-SSD-的运行时交互流程"><a href="#3-7-FPGA-与-SSD-的运行时交互流程" class="headerlink" title="3.7 FPGA 与 SSD 的运行时交互流程"></a>3.7 FPGA 与 SSD 的运行时交互流程</h2><p>从 NVMe 的角度看，一条命令不是 FPGA 单向把数据推给 SSD，而是 FPGA 提交命令后，SSD 再根据队列和 PRP 地址主动访问 FPGA。</p>
+<h3 id="3-7-1-命令提交"><a href="#3-7-1-命令提交" class="headerlink" title="3.7.1 命令提交"></a>3.7.1 命令提交</h3><p>FPGA 构造 64B NVMe SQE，并写入 ASQ 或 IOSQ。随后 FPGA 通过 RQ 发送 Memory Write TLP，写 SSD BAR0 中对应队列的 SQ Tail Doorbell。</p>
+<p>这一阶段的关键是：doorbell 不能早于 SQE 可读。否则 SSD 看到 doorbell 后来读 SQE，可能读到旧内容或无效内容。</p>
+<h3 id="3-7-2-SSD-获取命令"><a href="#3-7-2-SSD-获取命令" class="headerlink" title="3.7.2 SSD 获取命令"></a>3.7.2 SSD 获取命令</h3><p>SSD 收到 doorbell 后，会通过 CQ 发起 Memory Read，请求读取 FPGA 地址空间中的 SQE。</p>
+<p>FPGA 的 <code>CQ_route</code> 根据地址把请求路由到 queue 模块，queue 模块取出 SQE 后通过 <code>CC_round_robin</code> 返回 CplD。到这里 SSD 才真正拿到 NVMe 命令。</p>
+<h3 id="3-7-3-数据传输"><a href="#3-7-3-数据传输" class="headerlink" title="3.7.3 数据传输"></a>3.7.3 数据传输</h3><p>如果是 NVMe Write，数据方向是 FPGA 到 SSD：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">SSD 根据 PRP 地址发 CQ MemRd</span><br><span class="line">-&gt; FPGA memory 模块读取 data buffer</span><br><span class="line">-&gt; CC 返回 CplD 数据</span><br><span class="line">-&gt; SSD 写入闪存</span><br></pre></td></tr></table></figure>
+
+<p>如果是 NVMe Read，数据方向是 SSD 到 FPGA：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">SSD 从闪存取出数据</span><br><span class="line">-&gt; SSD 通过 CQ MemWr 写 FPGA memory window</span><br><span class="line">-&gt; FPGA memory 模块保存数据</span><br></pre></td></tr></table></figure>
+
+<p>因此写命令和读命令在 PCIe 上的“主动方”并不完全一样。写 SSD 时，实际 payload 是 SSD 主动读走；读 SSD 时，payload 是 SSD 主动写回。</p>
+<h3 id="3-7-4-命令完成"><a href="#3-7-4-命令完成" class="headerlink" title="3.7.4 命令完成"></a>3.7.4 命令完成</h3><p>数据传输完成后，SSD 会构造 CQE，并通过 CQ Memory Write 写入 ACQ 或 IOCQ。队列模块解析 CQE 后，将 CID、SQID、status 送到 command completion 路径。</p>
+<p><code>command_record</code> 用 CID 找到原来的命令上下文，判断 opcode、queue_id、status 是否匹配。匹配成功后释放 CID，并产生 <code>io_wr_done</code>、<code>io_rd_done</code> 或 Admin done pulse。</p>
+<p>处理完 CQE 后，FPGA 还需要更新 CQ Head Doorbell，告诉 SSD completion queue 中的 entry 已经被消费。</p>
+<h2 id="3-8-当前关键地址窗口"><a href="#3-8-当前关键地址窗口" class="headerlink" title="3.8 当前关键地址窗口"></a>3.8 当前关键地址窗口</h2><p>最新工程中的默认地址规划如下。</p>
+<table>
+<thead>
+<tr>
+<th>区域</th>
+<th>地址</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>SSD BAR0 base</td>
+<td><code>0x1000_0000</code></td>
+<td>FPGA 访问 SSD BAR 和 doorbell 的基地址</td>
+</tr>
+<tr>
+<td>Admin SQ</td>
+<td><code>0x2000_0000</code></td>
+<td>SSD 读取 Admin SQE</td>
+</tr>
+<tr>
+<td>Admin CQ</td>
+<td><code>0x2000_1000</code></td>
+<td>SSD 写入 Admin CQE</td>
+</tr>
+<tr>
+<td>IO SQ</td>
+<td><code>0x2000_2000</code></td>
+<td>SSD 读取 IO SQE</td>
+</tr>
+<tr>
+<td>IO CQ</td>
+<td><code>0x2001_2000</code></td>
+<td>SSD 写入 IO CQE</td>
+</tr>
+<tr>
+<td>Data memory base</td>
+<td><code>0x3000_2000</code></td>
+<td>FPGA&#x2F;SSD 共享数据窗口起点</td>
+</tr>
+<tr>
+<td>Write source buffer</td>
+<td><code>0x3000_2000</code></td>
+<td>16KB Write 测试源 buffer</td>
+</tr>
+<tr>
+<td>Read destination buffer</td>
+<td><code>0x3000_8000</code></td>
+<td>16KB Read 测试目标 buffer</td>
+</tr>
+<tr>
+<td>Memory window size</td>
+<td><code>64KB</code></td>
+<td><code>0x0001_0000</code></td>
+</tr>
+<tr>
+<td>PRP list base</td>
+<td><code>0x9000_0000</code></td>
+<td>SSD 读取虚拟 PRP List 的地址窗口</td>
+</tr>
+<tr>
+<td>PRP list window size</td>
+<td><code>32MB</code></td>
+<td><code>0x0200_0000</code></td>
+</tr>
+</tbody></table>
+<p>这里需要区分几个概念：</p>
+<ul>
+<li><code>SSD BAR0 base</code> 是 FPGA 访问 SSD 控制寄存器和 doorbell 的基地址。</li>
+<li>ASQ&#x2F;ACQ&#x2F;IOSQ&#x2F;IOCQ 是 FPGA 暴露给 SSD 的队列内存地址。</li>
+<li>Data memory base 是 SSD 根据 PRP 访问的实际数据窗口。</li>
+<li>PRP list base 是一个虚拟 PRP list 窗口，SSD 读这个窗口时由 <code>prp_ctl</code> 动态返回 PRP entry。</li>
+</ul>
+<p>这些地址必须在 NVMe 初始化、CQ route、queue、PRP、memory controller 中保持一致。只改一个模块会造成 SSD 请求打到错误窗口，表现为命令卡住、CQE 不回来或数据校验失败。</p>
+<h2 id="3-9-当前数据流总览"><a href="#3-9-当前数据流总览" class="headerlink" title="3.9 当前数据流总览"></a>3.9 当前数据流总览</h2><p>从外部写 SSD 的角度看：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">外部 AXI4 写入数据 buffer</span><br><span class="line">-&gt; AXI-Lite 下发 NVMe Write command</span><br><span class="line">-&gt; prp_ctl 计算 PRP</span><br><span class="line">-&gt; command_ctl 构造 SQE</span><br><span class="line">-&gt; nvme_queue_ctl 入队</span><br><span class="line">-&gt; RQ_round_robin 写 doorbell</span><br><span class="line">-&gt; SSD 从 CQ 侧读取 SQE / PRP / data</span><br><span class="line">-&gt; queue/memory/PRP 通过 CC_round_robin 返回 completion data</span><br><span class="line">-&gt; SSD 写 IOCQ</span><br><span class="line">-&gt; command_record 匹配 CID，产生 io_wr_done</span><br></pre></td></tr></table></figure>
+
+<p>从外部读 SSD 的角度看：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">AXI-Lite 下发 NVMe Read command</span><br><span class="line">-&gt; prp_ctl 计算接收 buffer 的 PRP</span><br><span class="line">-&gt; command_ctl 构造 SQE</span><br><span class="line">-&gt; nvme_queue_ctl 入队并敲门铃</span><br><span class="line">-&gt; SSD 读取 SQE / PRP</span><br><span class="line">-&gt; SSD 通过 CQ/MemWr 写 FPGA memory window</span><br><span class="line">-&gt; SSD 写 IOCQ</span><br><span class="line">-&gt; command_record 产生 io_rd_done</span><br><span class="line">-&gt; 外部 AXI4 读取目标 buffer 并校验</span><br></pre></td></tr></table></figure>
+
+<p>这两个流程都经过 command、queue、PRP 和 memory，只是数据 payload 的方向不同。这个区别在后面分析性能和 ILA 波形时很重要。</p>
+<h2 id="3-10-外部控制与测试入口"><a href="#3-10-外部控制与测试入口" class="headerlink" title="3.10 外部控制与测试入口"></a>3.10 外部控制与测试入口</h2><p>当前板级测试不是直接由 CPU 驱动完整软件栈，而是通过 VIO 和内部测试状态机组合完成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">VIO 控制 rw_test_enable / rw_write_start / rw_read_start</span><br><span class="line">-&gt; ssd_rw_test_ctrl 通过 AXI4 填充或读取 memory window</span><br><span class="line">-&gt; ssd_rw_test_ctrl 通过 AXI-Lite 写命令寄存器</span><br><span class="line">-&gt; SSD_ctl 执行 NVMe Write / Read</span><br><span class="line">-&gt; ssd_rw_test_ctrl 读取结果并比较</span><br></pre></td></tr></table></figure>
+
+<p>写 16KB 测试的顺序是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">AXI4 写 source buffer</span><br><span class="line">-&gt; AXI-Lite 发 NVMe Write command</span><br><span class="line">-&gt; 等待 io_wr_done</span><br></pre></td></tr></table></figure>
+
+<p>读 16KB 测试的顺序是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">AXI-Lite 发 NVMe Read command</span><br><span class="line">-&gt; 等待 io_rd_done</span><br><span class="line">-&gt; AXI4 读 destination buffer</span><br><span class="line">-&gt; 比较读回数据</span><br></pre></td></tr></table></figure>
+
+<p>因此，AXI4 和 AXI-Lite 的职责不同：AXI4 负责数据缓存访问，AXI-Lite 负责命令和状态控制。</p>
+<h2 id="3-11-章节总结"><a href="#3-11-章节总结" class="headerlink" title="3.11 章节总结"></a>3.11 章节总结</h2><p>当前架构已经预留或实现了几个扩展点：</p>
+<ul>
+<li>IO Queue 可扩展到 16 路，队列调度支持 fixed、RR、WRR 等策略。</li>
+<li>command 模块有 CID 池和 command_record，可以处理乱序 completion。</li>
+<li>queue 模块加入 doorbell 聚合思路，减少频繁 doorbell Memory Write。</li>
+<li>PRP 模块支持虚拟 PRP list window，当前适合连续地址和固定窗口测试。</li>
+<li>AXI-Lite 暴露配置和状态寄存器，后续可以接入更多错误统计和调试状态。</li>
+</ul>
+<p>本章可以归纳为：</p>
+<ul>
+<li>运行时主数据路径主要是 RQ&#x2F;CQ&#x2F;CC，<code>SSD_ctl</code> 不直接消费 RC completion。</li>
+<li>PRP list 还不是完整 OS 级物理页表管理。</li>
+<li>MSI-X 接收、完整错误恢复、AER&#x2F;Abort 等高级功能不是当前主线。</li>
+<li>当前板级测试以 16KB 写读闭环和固定 memory window 为主。</li>
+</ul>
+<p>这个版本更适合作为轻量级 NVMe Host Controller 原型，重点展示从 PCIe TLP 到 NVMe 队列、PRP、数据窗口和 completion 回收的完整硬件闭环。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/20/fpga-nvme-host-03-architecture/" data-id="cmpe94ygr0000w8i7ethm4pr2" data-title="FPGA NVMe Host 项目记录（三）：系统总体架构" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+
+  
     <article id="post-fpga-nvme-host-02-pcie-nvme-basics" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
   <div class="article-meta">
     <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/" class="article-date">
@@ -104,7 +424,7 @@
     
     <div class="e-content article-entry" itemprop="articleBody">
       
-        <p>这一篇对应 Obsidian 笔记里的第二章。为了博客阅读更连续，我把 <code>2A/2B/2C/2D</code> 合并到一篇文章里，但正文仍然保留原来的章节关系。</p>
+        <p>这一篇对应第二章内容，将 <code>2A/2B/2C/2D</code> 合并到同一篇中，正文仍然保留原来的章节关系。</p>
 <p>本章顺序如下：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">2.1 NVMe over PCIe 基础          -&gt; 对应 2A</span><br><span class="line">2.2 相关内容学习                  -&gt; 对应 2B</span><br><span class="line">2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对应 2C</span><br><span class="line">2.4 设计注意事项                  -&gt; 对应 2D</span><br></pre></td></tr></table></figure>
 
@@ -151,7 +471,7 @@
 <li><a href="#2-4-5-Queue%E3%80%81Doorbell-%E5%92%8C-PRP">2.4.5 Queue、Doorbell 和 PRP</a></li>
 <li><a href="#2-4-6-CID-%E7%94%9F%E5%91%BD%E5%91%A8%E6%9C%9F">2.4.6 CID 生命周期</a></li>
 <li><a href="#2-4-7-ILA-%E8%B0%83%E8%AF%95%E4%BC%98%E5%85%88%E7%BA%A7">2.4.7 ILA 调试优先级</a></li>
-<li><a href="#2-4-8-%E5%BD%93%E5%89%8D%E8%BE%B9%E7%95%8C">2.4.8 当前边界</a></li>
+<li><a href="#2-4-8-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">2.4.8 章节总结</a></li>
 </ul>
 </li>
 </ul>
@@ -669,13 +989,13 @@
 </tr>
 </tbody></table>
 <p>不要一开始只抓一个很宽的拼接总线。更适合的做法是把关键路径拆成几组 ILA，每组信号都打一拍，触发条件也围绕具体事件设置。</p>
-<h3 id="2-4-8-当前边界"><a href="#2-4-8-当前边界" class="headerlink" title="2.4.8 当前边界"></a>2.4.8 当前边界</h3><p>当前版本更适合作为轻量级 NVMe Host Controller 原型：</p>
+<h3 id="2-4-8-章节总结"><a href="#2-4-8-章节总结" class="headerlink" title="2.4.8 章节总结"></a>2.4.8 章节总结</h3><p>当前版本更适合作为轻量级 NVMe Host Controller 原型：</p>
 <ul>
 <li>支持固定地址窗口下的 Admin Queue、IO Queue 和 16KB 读写闭环。</li>
 <li>支持基础多队列结构、CID 匹配、PRP list 响应和状态统计。</li>
 <li>不把 MSI-X、完整 PRP RAM、完整错误恢复、复杂电源管理作为当前主线。</li>
 </ul>
-<p>这个边界在写博客和准备面试时也要讲清楚。项目的亮点是从 PCIe TLP 到 NVMe 队列的数据闭环，而不是声称已经实现完整商用 SSD 驱动。</p>
+<p>本章可以归纳为：项目的重点是从 PCIe TLP 到 NVMe 队列的数据闭环，而不是把所有商用 SSD 驱动特性一次性全部覆盖。</p>
 
       
     </div>
@@ -1169,7 +1489,7 @@
   <div class="widget-wrap">
     <h3 class="widget-title">标签云</h3>
     <div class="widget tagcloud">
-      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 10px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
+      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 15px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
     </div>
   </div>
 
@@ -1189,6 +1509,10 @@
     <h3 class="widget-title">最新文章</h3>
     <div class="widget">
       <ul>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
+          </li>
         
           <li>
             <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/">FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置</a>

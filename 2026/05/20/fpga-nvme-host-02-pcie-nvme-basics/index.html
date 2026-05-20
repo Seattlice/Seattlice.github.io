@@ -6,12 +6,12 @@
   
   <title>FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置 | LI HUALOU</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <meta name="description" content="这一篇对应 Obsidian 笔记里的第二章。为了博客阅读更连续，我把 2A&#x2F;2B&#x2F;2C&#x2F;2D 合并到一篇文章里，但正文仍然保留原来的章节关系。 本章顺序如下： 12342.1 NVMe over PCIe 基础          -&gt; 对应 2A2.2 相关内容学习                  -&gt; 对应 2B2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对">
+  <meta name="description" content="这一篇对应第二章内容，将 2A&#x2F;2B&#x2F;2C&#x2F;2D 合并到同一篇中，正文仍然保留原来的章节关系。 本章顺序如下： 12342.1 NVMe over PCIe 基础          -&gt; 对应 2A2.2 相关内容学习                  -&gt; 对应 2B2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对应 2C2.4 设计注意事项">
 <meta property="og:type" content="article">
 <meta property="og:title" content="FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置">
 <meta property="og:url" content="https://seattlice.github.io/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/index.html">
 <meta property="og:site_name" content="LI HUALOU">
-<meta property="og:description" content="这一篇对应 Obsidian 笔记里的第二章。为了博客阅读更连续，我把 2A&#x2F;2B&#x2F;2C&#x2F;2D 合并到一篇文章里，但正文仍然保留原来的章节关系。 本章顺序如下： 12342.1 NVMe over PCIe 基础          -&gt; 对应 2A2.2 相关内容学习                  -&gt; 对应 2B2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对">
+<meta property="og:description" content="这一篇对应第二章内容，将 2A&#x2F;2B&#x2F;2C&#x2F;2D 合并到同一篇中，正文仍然保留原来的章节关系。 本章顺序如下： 12342.1 NVMe over PCIe 基础          -&gt; 对应 2A2.2 相关内容学习                  -&gt; 对应 2B2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对应 2C2.4 设计注意事项">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/nvme-over-pcie-basics.svg">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-ip-interfaces.png">
@@ -136,7 +136,7 @@
     
     <div class="e-content article-entry" itemprop="articleBody">
       
-        <p>这一篇对应 Obsidian 笔记里的第二章。为了博客阅读更连续，我把 <code>2A/2B/2C/2D</code> 合并到一篇文章里，但正文仍然保留原来的章节关系。</p>
+        <p>这一篇对应第二章内容，将 <code>2A/2B/2C/2D</code> 合并到同一篇中，正文仍然保留原来的章节关系。</p>
 <p>本章顺序如下：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">2.1 NVMe over PCIe 基础          -&gt; 对应 2A</span><br><span class="line">2.2 相关内容学习                  -&gt; 对应 2B</span><br><span class="line">2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对应 2C</span><br><span class="line">2.4 设计注意事项                  -&gt; 对应 2D</span><br></pre></td></tr></table></figure>
 
@@ -183,7 +183,7 @@
 <li><a href="#2-4-5-Queue%E3%80%81Doorbell-%E5%92%8C-PRP">2.4.5 Queue、Doorbell 和 PRP</a></li>
 <li><a href="#2-4-6-CID-%E7%94%9F%E5%91%BD%E5%91%A8%E6%9C%9F">2.4.6 CID 生命周期</a></li>
 <li><a href="#2-4-7-ILA-%E8%B0%83%E8%AF%95%E4%BC%98%E5%85%88%E7%BA%A7">2.4.7 ILA 调试优先级</a></li>
-<li><a href="#2-4-8-%E5%BD%93%E5%89%8D%E8%BE%B9%E7%95%8C">2.4.8 当前边界</a></li>
+<li><a href="#2-4-8-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">2.4.8 章节总结</a></li>
 </ul>
 </li>
 </ul>
@@ -701,13 +701,13 @@
 </tr>
 </tbody></table>
 <p>不要一开始只抓一个很宽的拼接总线。更适合的做法是把关键路径拆成几组 ILA，每组信号都打一拍，触发条件也围绕具体事件设置。</p>
-<h3 id="2-4-8-当前边界"><a href="#2-4-8-当前边界" class="headerlink" title="2.4.8 当前边界"></a>2.4.8 当前边界</h3><p>当前版本更适合作为轻量级 NVMe Host Controller 原型：</p>
+<h3 id="2-4-8-章节总结"><a href="#2-4-8-章节总结" class="headerlink" title="2.4.8 章节总结"></a>2.4.8 章节总结</h3><p>当前版本更适合作为轻量级 NVMe Host Controller 原型：</p>
 <ul>
 <li>支持固定地址窗口下的 Admin Queue、IO Queue 和 16KB 读写闭环。</li>
 <li>支持基础多队列结构、CID 匹配、PRP list 响应和状态统计。</li>
 <li>不把 MSI-X、完整 PRP RAM、完整错误恢复、复杂电源管理作为当前主线。</li>
 </ul>
-<p>这个边界在写博客和准备面试时也要讲清楚。项目的亮点是从 PCIe TLP 到 NVMe 队列的数据闭环，而不是声称已经实现完整商用 SSD 驱动。</p>
+<p>本章可以归纳为：项目的重点是从 PCIe TLP 到 NVMe 队列的数据闭环，而不是把所有商用 SSD 驱动特性一次性全部覆盖。</p>
 
       
     </div>
@@ -723,6 +723,15 @@
   
     
 <nav id="article-nav">
+  
+    <a href="/2026/05/20/fpga-nvme-host-03-architecture/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">前一篇</strong>
+      <div class="article-nav-title">
+        
+          FPGA NVMe Host 项目记录（三）：系统总体架构
+        
+      </div>
+    </a>
   
   
     <a href="/2026/05/20/fpga-nvme-host-01-background/" id="article-nav-older" class="article-nav-link-wrap">
@@ -764,7 +773,7 @@
   <div class="widget-wrap">
     <h3 class="widget-title">标签云</h3>
     <div class="widget tagcloud">
-      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 10px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
+      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 15px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
     </div>
   </div>
 
@@ -784,6 +793,10 @@
     <h3 class="widget-title">最新文章</h3>
     <div class="widget">
       <ul>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
+          </li>
         
           <li>
             <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/">FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置</a>
