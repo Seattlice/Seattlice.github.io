@@ -6,12 +6,12 @@
   
   <title>FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置 | LI HUALOU</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <meta name="description" content="这一篇主要记录项目里用到的 PCIe &#x2F; NVMe 基础概念、Xilinx PCIe IP 配置，以及我在设计时反复确认的一些注意事项。它不是完整协议手册，更像是围绕当前工程整理出来的工作笔记。  PCIe 和 NVMe 的关系NVMe SSD 底层通过 PCIe 传输数据，但 NVMe 和 PCIe 不是同一层协议。 12PCIe：负责把 request &#x2F; completion &#x2F;">
+  <meta name="description" content="这一篇对应 Obsidian 笔记里的第二章。为了博客阅读更连续，我把 2A&#x2F;2B&#x2F;2C&#x2F;2D 合并到一篇文章里，但正文仍然保留原来的章节关系。 本章顺序如下： 12342.1 NVMe over PCIe 基础          -&gt; 对应 2A2.2 相关内容学习                  -&gt; 对应 2B2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对">
 <meta property="og:type" content="article">
 <meta property="og:title" content="FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置">
 <meta property="og:url" content="https://seattlice.github.io/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/index.html">
 <meta property="og:site_name" content="LI HUALOU">
-<meta property="og:description" content="这一篇主要记录项目里用到的 PCIe &#x2F; NVMe 基础概念、Xilinx PCIe IP 配置，以及我在设计时反复确认的一些注意事项。它不是完整协议手册，更像是围绕当前工程整理出来的工作笔记。  PCIe 和 NVMe 的关系NVMe SSD 底层通过 PCIe 传输数据，但 NVMe 和 PCIe 不是同一层协议。 12PCIe：负责把 request &#x2F; completion &#x2F;">
+<meta property="og:description" content="这一篇对应 Obsidian 笔记里的第二章。为了博客阅读更连续，我把 2A&#x2F;2B&#x2F;2C&#x2F;2D 合并到一篇文章里，但正文仍然保留原来的章节关系。 本章顺序如下： 12342.1 NVMe over PCIe 基础          -&gt; 对应 2A2.2 相关内容学习                  -&gt; 对应 2B2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/nvme-over-pcie-basics.svg">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-ip-interfaces.png">
@@ -29,12 +29,20 @@
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cfg-interrupt.png">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cfg-control.png">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cfg-fc.png">
-<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-transmit-fc.png">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-msg-tx.png">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-msg-rx.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-transmit-fc.png">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-shared-logic.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-rq-interface.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-rq-desc.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-rc-interface.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-rc-desc.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cq-interface.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cq-desc.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cc-interface.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cc-desc.png">
 <meta property="article:published_time" content="2026-05-20T06:45:00.000Z">
-<meta property="article:modified_time" content="2026-05-20T06:45:00.000Z">
+<meta property="article:modified_time" content="2026-05-20T07:20:00.000Z">
 <meta property="article:author" content="LI HUALOU">
 <meta property="article:tag" content="NVMe">
 <meta property="article:tag" content="PCIe">
@@ -128,9 +136,12 @@
     
     <div class="e-content article-entry" itemprop="articleBody">
       
-        <p>这一篇主要记录项目里用到的 PCIe &#x2F; NVMe 基础概念、Xilinx PCIe IP 配置，以及我在设计时反复确认的一些注意事项。它不是完整协议手册，更像是围绕当前工程整理出来的工作笔记。</p>
+        <p>这一篇对应 Obsidian 笔记里的第二章。为了博客阅读更连续，我把 <code>2A/2B/2C/2D</code> 合并到一篇文章里，但正文仍然保留原来的章节关系。</p>
+<p>本章顺序如下：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">2.1 NVMe over PCIe 基础          -&gt; 对应 2A</span><br><span class="line">2.2 相关内容学习                  -&gt; 对应 2B</span><br><span class="line">2.3 赛灵思 PCIe IP 配置与说明      -&gt; 对应 2C</span><br><span class="line">2.4 设计注意事项                  -&gt; 对应 2D</span><br></pre></td></tr></table></figure>
+
 <p><img src="/images/nvme-host/nvme-over-pcie-basics.svg" alt="NVMe over PCIe 基础概念关系"></p>
-<h2 id="PCIe-和-NVMe-的关系"><a href="#PCIe-和-NVMe-的关系" class="headerlink" title="PCIe 和 NVMe 的关系"></a>PCIe 和 NVMe 的关系</h2><p>NVMe SSD 底层通过 PCIe 传输数据，但 NVMe 和 PCIe 不是同一层协议。</p>
+<h2 id="2-1-NVMe-over-PCIe-基础"><a href="#2-1-NVMe-over-PCIe-基础" class="headerlink" title="2.1 NVMe over PCIe 基础"></a>2.1 NVMe over PCIe 基础</h2><h3 id="2-1-1-PCIe-和-NVMe-的关系"><a href="#2-1-1-PCIe-和-NVMe-的关系" class="headerlink" title="2.1.1 PCIe 和 NVMe 的关系"></a>2.1.1 PCIe 和 NVMe 的关系</h3><p>NVMe SSD 底层通过 PCIe 传输数据，但 NVMe 和 PCIe 不是同一层协议。</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">PCIe：负责把 request / completion / payload 在链路上传过去。</span><br><span class="line">NVMe：定义 SSD 如何接收命令、如何通过队列完成读写、如何返回完成信息。</span><br></pre></td></tr></table></figure>
 
 <p>在普通 PC 里，CPU 和操作系统驱动完成这些工作：</p>
@@ -142,15 +153,14 @@
 <li>写 doorbell 通知 SSD 取命令。</li>
 <li>解析 Completion Queue Entry，回收命令资源。</li>
 </ul>
-<p>本项目把这些流程下沉到 FPGA 内部，用 RTL 完成主机侧控制逻辑。</p>
-<h2 id="FPGA-在系统中的角色"><a href="#FPGA-在系统中的角色" class="headerlink" title="FPGA 在系统中的角色"></a>FPGA 在系统中的角色</h2><p>从协议角色看，FPGA 在本项目中承担的是轻量级 Host Controller 的角色。</p>
+<p>本项目把这些流程下沉到 FPGA 内部，用 RTL 完成主机侧控制逻辑。这里的边界要说清楚：FPGA 实现的是一套面向固定场景的轻量级 NVMe Host Controller，而不是完整商用 NVMe 驱动。</p>
+<h3 id="2-1-2-FPGA-在系统中的角色"><a href="#2-1-2-FPGA-在系统中的角色" class="headerlink" title="2.1.2 FPGA 在系统中的角色"></a>2.1.2 FPGA 在系统中的角色</h3><p>从协议角色看，FPGA 在本项目中承担 Host &#x2F; Root Port 侧逻辑：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">FPGA Host</span><br><span class="line">    负责 PCIe/NVMe 初始化、队列管理、命令生成、PRP 地址管理、数据缓存</span><br><span class="line"></span><br><span class="line">NVMe SSD</span><br><span class="line">    负责执行命令，并通过 PCIe 主动读取命令、PRP、数据，写回 CQE 或读数据</span><br></pre></td></tr></table></figure>
 
-<p>当前工程里，FPGA 不是把所有 NVMe 特性都做完，而是实现一条可上板运行的基础读写路径：</p>
+<p>当前工程里，FPGA 实现的基础读写路径是：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">初始化完成</span><br><span class="line">-&gt; 建立 Admin Queue 和 IO Queue</span><br><span class="line">-&gt; AXI-Lite 触发 Read/Write 命令</span><br><span class="line">-&gt; SSD 读取 SQE / PRP / 数据</span><br><span class="line">-&gt; SSD 写回 Completion</span><br><span class="line">-&gt; FPGA 匹配 CID 并输出 done/status</span><br></pre></td></tr></table></figure>
 
-<p>这也是后续博客中应该坚持的项目边界：轻量级 NVMe Host Controller，而不是完整商用 NVMe 协议栈。</p>
-<h2 id="PCIe-TLP-四条通路"><a href="#PCIe-TLP-四条通路" class="headerlink" title="PCIe TLP 四条通路"></a>PCIe TLP 四条通路</h2><p>Xilinx PCIe IP 对用户逻辑暴露四条 AXI-Stream 通道：</p>
+<h3 id="2-1-3-PCIe-TLP-四条通路"><a href="#2-1-3-PCIe-TLP-四条通路" class="headerlink" title="2.1.3 PCIe TLP 四条通路"></a>2.1.3 PCIe TLP 四条通路</h3><p>Xilinx PCIe IP 对用户逻辑暴露四条 AXI-Stream 通道：</p>
 <table>
 <thead>
 <tr>
@@ -192,7 +202,7 @@
 <p>读 16KB 数据则是：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">FPGA 写 doorbell</span><br><span class="line">-&gt; SSD 通过 CQ 读 IOSQ 中的 SQE</span><br><span class="line">-&gt; SSD 根据 SQE 中的 PRP 地址，把数据通过 CQ MemWr 写回 FPGA memory window</span><br><span class="line">-&gt; SSD 通过 CQ 写 IOCQ completion</span><br></pre></td></tr></table></figure>
 
-<h2 id="NVMe-Queue、Doorbell、CID-和-PRP"><a href="#NVMe-Queue、Doorbell、CID-和-PRP" class="headerlink" title="NVMe Queue、Doorbell、CID 和 PRP"></a>NVMe Queue、Doorbell、CID 和 PRP</h2><p>最小 NVMe 系统需要四类队列：</p>
+<h3 id="2-1-4-Queue、Doorbell、CID-和-PRP"><a href="#2-1-4-Queue、Doorbell、CID-和-PRP" class="headerlink" title="2.1.4 Queue、Doorbell、CID 和 PRP"></a>2.1.4 Queue、Doorbell、CID 和 PRP</h3><p>最小 NVMe 系统需要四类队列：</p>
 <table>
 <thead>
 <tr>
@@ -224,11 +234,11 @@
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">FPGA 更新 SQ tail</span><br><span class="line">-&gt; 通过 PCIe Memory Write 写 SSD BAR0 中的 doorbell register</span><br><span class="line">-&gt; SSD 得知某个队列有新命令</span><br><span class="line">-&gt; SSD 根据 ASQ/IOSQ 地址读取命令</span><br></pre></td></tr></table></figure>
 
 <p>CID 用来把发出去的命令和回来的 completion 对应起来。SSD 可能乱序完成不同命令，所以不能只按发送顺序判断哪条命令完成。当前 <code>command_ctl</code> 中围绕 CID 做了分配、记录、匹配、回收和错误统计。</p>
-<p>PRP 则是 NVMe 的物理页地址描述方式：</p>
+<p>PRP 是 NVMe 的物理页地址描述方式：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">PRP1：第一个数据页地址</span><br><span class="line">PRP2：第二个数据页地址，或 PRP List 地址</span><br><span class="line">PRP List：当数据跨越更多 page 时，保存后续 page 地址列表</span><br></pre></td></tr></table></figure>
 
 <p>当前 16KB 测试对应 4 个 4KB page。<code>prp_ctl</code> 不预先把完整 PRP list 写入外部 DDR，而是在 FPGA 内部维护 CID 到 page 信息的上下文。当 SSD 发起 PRP list read 时，由 <code>prp_ctl</code> 根据地址和 CID 返回对应 PRP entry。</p>
-<h2 id="当前地址窗口"><a href="#当前地址窗口" class="headerlink" title="当前地址窗口"></a>当前地址窗口</h2><p>当前默认规划可以概括为：</p>
+<h3 id="2-1-5-当前地址窗口"><a href="#2-1-5-当前地址窗口" class="headerlink" title="2.1.5 当前地址窗口"></a>2.1.5 当前地址窗口</h3><p>当前默认规划可以概括为：</p>
 <table>
 <thead>
 <tr>
@@ -274,7 +284,7 @@
 </tr>
 </tbody></table>
 <p>这些地址需要在初始化、CQ route、PRP、memory controller 中保持一致。如果某个模块里的地址常量没有同步更新，SSD 发出的 MemRd&#x2F;MemWr 可能会打到错误窗口，表现为命令卡住、CQE 不回来或数据校验失败。</p>
-<h2 id="Xilinx-PCIe-IP-手册学习"><a href="#Xilinx-PCIe-IP-手册学习" class="headerlink" title="Xilinx PCIe IP 手册学习"></a>Xilinx PCIe IP 手册学习</h2><p>当前使用的是 Xilinx UltraScale PCIe Integrated Block，主要参考 PG156。这个 IP 的用户侧接口可以分成三类：时钟和复位接口、Configuration &#x2F; Management 相关接口、PCIe Transaction 相关 AXI-Stream 接口。</p>
+<h2 id="2-2-相关内容学习"><a href="#2-2-相关内容学习" class="headerlink" title="2.2 相关内容学习"></a>2.2 相关内容学习</h2><h3 id="2-2-1-Xilinx-PCIe-IP-手册学习"><a href="#2-2-1-Xilinx-PCIe-IP-手册学习" class="headerlink" title="2.2.1 Xilinx PCIe IP 手册学习"></a>2.2.1 Xilinx PCIe IP 手册学习</h3><p>当前使用的是 Xilinx UltraScale PCIe Integrated Block，主要参考 PG156。这个 IP 的用户侧接口可以分成三类：时钟和复位接口、Configuration &#x2F; Management 相关接口、PCIe Transaction 相关 AXI-Stream 接口。</p>
 <p><img src="/images/nvme-host/2b-ip-interfaces.png" alt="Xilinx PCIe IP 接口分类"></p>
 <p>时钟侧需要外部 PCIe 参考时钟，当前工程按 100 MHz 参考时钟处理；用户逻辑侧使用 IP 输出的 <code>user_clk</code>，当前配置为 125 MHz。</p>
 <p><img src="/images/nvme-host/2b-clock-interface.png" alt="PCIe IP 时钟接口"></p>
@@ -284,7 +294,18 @@
 <p><img src="/images/nvme-host/2b-tlp-interface.png" alt="PCIe IP TLP 接口"></p>
 <p>KU060 板卡上有多个 PCIe hard block 位置，当前工程使用的是与板卡走线匹配的位置。之前上板调试时，PCIe block location 选择不一致会导致 link 训练失败，所以这部分要和板卡约束一起确认。</p>
 <p><img src="/images/nvme-host/2b-ku060-pcie-location.png" alt="KU060 PCIe 位置"></p>
-<h2 id="NVMe-初始化相关记录"><a href="#NVMe-初始化相关记录" class="headerlink" title="NVMe 初始化相关记录"></a>NVMe 初始化相关记录</h2><p>当前学习和实现主要参考 NVMe 1.3d。对当前项目来说，关键不是版本号本身，而是理解下面几类内容：</p>
+<h3 id="2-2-2-PCIe-启动和分层理解"><a href="#2-2-2-PCIe-启动和分层理解" class="headerlink" title="2.2.2 PCIe 启动和分层理解"></a>2.2.2 PCIe 启动和分层理解</h3><p>PCIe 设备在系统上电后需要满足启动时序要求。常见描述是：电源稳定后，PERST# 在规定时间后释放；PERST# 释放后，端口需要在限定时间内准备好链路训练。</p>
+<p>对当前项目的影响主要是：</p>
+<ul>
+<li>FPGA bitstream、PCIe IP 配置和板级复位时序不能让端口长期停在不可训练状态。</li>
+<li>作为 Root Port 控制 SSD 时，应先等待 <code>user_lnk_up</code>，再进入枚举和 NVMe 初始化。</li>
+<li>上板调试时，如果 link 一直不起，先看参考时钟、PERST#、IP location、lane 配置和 LTSSM 状态。</li>
+</ul>
+<p>从工程实现看，PCIe 可以先按下面分层理解：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">Physical / Data Link</span><br><span class="line">    由 Xilinx PCIe hard IP 处理，包括链路训练、DLLP、重传等。</span><br><span class="line"></span><br><span class="line">Transaction Layer</span><br><span class="line">    用户逻辑能看到的主要是 TLP，通过 RQ/RC/CQ/CC 传输。</span><br><span class="line"></span><br><span class="line">NVMe</span><br><span class="line">    构建在 PCIe Memory Read/Write 和队列机制之上。</span><br></pre></td></tr></table></figure>
+
+<p>所以工程重点不是自己实现 PCIe 物理层，而是在 TLP 层正确组织请求、解析 completion，并把 NVMe 队列和地址窗口维护好。</p>
+<h3 id="2-2-3-NVMe-初始化相关记录"><a href="#2-2-3-NVMe-初始化相关记录" class="headerlink" title="2.2.3 NVMe 初始化相关记录"></a>2.2.3 NVMe 初始化相关记录</h3><p>当前学习和实现主要参考 NVMe 1.3d。对当前项目来说，关键不是版本号本身，而是理解下面几类内容：</p>
 <ul>
 <li>Controller Register：CAP、VS、CC、CSTS、AQA、ASQ、ACQ、doorbell。</li>
 <li>Admin Command：Identify、Create IO CQ、Create IO SQ。</li>
@@ -367,47 +388,274 @@
 <td>轮询 <code>CSTS.RDY</code>，等待控制器 ready</td>
 </tr>
 </tbody></table>
-<h2 id="Xilinx-IP-配置要点"><a href="#Xilinx-IP-配置要点" class="headerlink" title="Xilinx IP 配置要点"></a>Xilinx IP 配置要点</h2><p>当前 PCIe IP 的一些端口和侧边带接口可以按下面方式理解。</p>
+<h2 id="2-3-赛灵思-PCIe-IP-配置与说明"><a href="#2-3-赛灵思-PCIe-IP-配置与说明" class="headerlink" title="2.3 赛灵思 PCIe IP 配置与说明"></a>2.3 赛灵思 PCIe IP 配置与说明</h2><p>这一节对应原来的 <code>2C.赛灵思IP配置与说明.md</code>。Obsidian 版本里交叉引用了很多独立页面，Hexo 版本不能直接显示这些嵌入内容，所以这里把主要内容整理成正文。</p>
+<h3 id="2-3-1-PCIe-IP-端口分类"><a href="#2-3-1-PCIe-IP-端口分类" class="headerlink" title="2.3.1 PCIe IP 端口分类"></a>2.3.1 PCIe IP 端口分类</h3><p>当前 PCIe IP 的一些端口和侧边带接口可以按下面方式理解。</p>
 <p><img src="/images/nvme-host/2c-port-list.png" alt="PCIe IP 端口列表"></p>
-<h3 id="时钟、复位和链路状态"><a href="#时钟、复位和链路状态" class="headerlink" title="时钟、复位和链路状态"></a>时钟、复位和链路状态</h3><p>板载 PCIe 100 MHz 差分参考时钟进入 <code>IBUFDS_GTE4</code>，PCIe IP 输出的 <code>user_clk</code> 作为用户逻辑主时钟，当前为 125 MHz。用户逻辑复位跟随 <code>user_reset</code>，枚举、初始化和 IO 测试都应等待 <code>user_lnk_up</code> 为 1 后再启动。</p>
+<p>当前工程中比较关键的端口可以分成几类：</p>
+<ul>
+<li>RQ、RC、CQ、CC：PCIe TLP 的四条 AXI-Stream 主通路。</li>
+<li><code>sys_clk</code>、<code>sys_clk_gt</code>、<code>user_clk</code>、<code>user_reset</code>、<code>user_lnk_up</code>：时钟、复位和链路状态。</li>
+<li><code>cfg_mgmt_*</code>：PCIe IP 内部配置空间管理接口。</li>
+<li><code>cfg_interrupt_*</code>、<code>cfg_msg_*</code>、<code>cfg_fc_*</code>、<code>pcie_tfc_*</code> 等：中断、消息、流控和状态类侧边带接口。</li>
+</ul>
+<h3 id="2-3-2-时钟与复位"><a href="#2-3-2-时钟与复位" class="headerlink" title="2.3.2 时钟与复位"></a>2.3.2 时钟与复位</h3><p>板载 PCIe 100 MHz 差分参考时钟进入 <code>IBUFDS_GTE4</code>，PCIe IP 输出的 <code>user_clk</code> 作为用户逻辑主时钟，当前为 125 MHz。用户逻辑复位跟随 <code>user_reset</code>，枚举、初始化和 IO 测试都应等待 <code>user_lnk_up</code> 为 1 后再启动。</p>
 <p><img src="/images/nvme-host/2c-clock.png" alt="PCIe 时钟配置"></p>
-<h3 id="cfg-mgmt"><a href="#cfg-mgmt" class="headerlink" title="cfg_mgmt"></a>cfg_mgmt</h3><p><code>cfg_mgmt</code> 在当前工程中主要由 Alex Forencich 的 PCIe 封装模块使用，用于读取 PCIe IP 内部协商出来的 Max Payload Size、Max Read Request Size 等参数。它不是发往 SSD 的配置 TLP 通路。</p>
+<p>这里需要分清三个层次：</p>
+<ul>
+<li><code>sys_clk</code> &#x2F; <code>sys_clk_gt</code> 是 PCIe IP 的参考时钟输入，来自板卡 PCIe 专用参考时钟。</li>
+<li><code>user_clk</code> 是用户逻辑处理 RQ&#x2F;RC&#x2F;CQ&#x2F;CC 的主时钟。</li>
+<li><code>user_reset</code> 是 PCIe IP 同步到 <code>user_clk</code> 域后的用户复位，内部通常再转换成 <code>user_rst_n</code> 使用。</li>
+</ul>
+<p>上板调试时，如果 <code>user_lnk_up</code> 已经为 1，但内部逻辑不动，要同时检查 <code>user_reset</code> 是否释放。如果 <code>phy_rdy_out</code> 为 1 而 <code>user_lnk_up</code> 为 0，则更偏向链路训练或协议协商没有完成。</p>
+<h3 id="2-3-3-Configuration-Management-Interface"><a href="#2-3-3-Configuration-Management-Interface" class="headerlink" title="2.3.3 Configuration Management Interface"></a>2.3.3 Configuration Management Interface</h3><p><code>cfg_mgmt</code> 是 PCIe IP 的本地配置管理接口。它不是发往 SSD 的 TLP 通路，而是用户逻辑访问 PCIe IP 自身配置空间和状态寄存器的侧边带接口。</p>
 <p><img src="/images/nvme-host/2c-cfg-mgmt.png" alt="cfg_mgmt 接口"></p>
-<h3 id="cfg-interrupt"><a href="#cfg-interrupt" class="headerlink" title="cfg_interrupt"></a>cfg_interrupt</h3><p>当前工程不使用 Root Port IP 主动发送传统中断，输入固定为 0：</p>
+<p>在当前工程中，<code>cfg_mgmt</code> 主要由 Alex Forencich 的 PCIe 封装模块使用。<code>pcie_us_cfg.v</code> 会周期性读取 Device Control Register，得到：</p>
+<ul>
+<li><code>max_payload_size</code></li>
+<li><code>max_read_request_size</code></li>
+<li><code>ext_tag_enable</code></li>
+</ul>
+<p>这些值会影响 RQ&#x2F;CC 方向的 TLP 分包。比如实际 MPS 是 128B 时，CC 返回 memory read data 就要按 128B 或更小 payload 拆包，不能只按 IP 配置页上宣称的能力上限来发。</p>
+<p>典型连接方式是让 Alex 封装模块接管 <code>cfg_mgmt_*</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_mgmt_addr</span>              (cfg_mgmt_addr),</span><br><span class="line"><span class="variable">.cfg_mgmt_write</span>             (cfg_mgmt_write),</span><br><span class="line"><span class="variable">.cfg_mgmt_write_data</span>        (cfg_mgmt_write_data),</span><br><span class="line"><span class="variable">.cfg_mgmt_byte_enable</span>       (cfg_mgmt_byte_enable),</span><br><span class="line"><span class="variable">.cfg_mgmt_read</span>              (cfg_mgmt_read),</span><br><span class="line"><span class="variable">.cfg_mgmt_read_data</span>         (cfg_mgmt_read_data),</span><br><span class="line"><span class="variable">.cfg_mgmt_read_write_done</span>   (cfg_mgmt_read_write_done)</span><br></pre></td></tr></table></figure>
+
+<p><code>cfg_mgmt_type1_cfg_reg_access</code> 当前项目固定接 0。工程里的 SSD 枚举和 BAR 配置不是靠这个接口完成，而是通过 RQ&#x2F;RC 发送配置读写 TLP 访问 SSD 配置空间。</p>
+<h3 id="2-3-4-Configuration-Interrupt-Controller-Interface"><a href="#2-3-4-Configuration-Interrupt-Controller-Interface" class="headerlink" title="2.3.4 Configuration Interrupt Controller Interface"></a>2.3.4 Configuration Interrupt Controller Interface</h3><p>当前工程不使用 Root Port IP 主动发送传统中断，输入固定为 0：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_interrupt_int</span>       (<span class="number">4&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_interrupt_pending</span>   (<span class="number">4&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_interrupt_sent</span>      ()</span><br></pre></td></tr></table></figure>
 
 <p><img src="/images/nvme-host/2c-cfg-interrupt.png" alt="cfg_interrupt 接口"></p>
-<h3 id="cfg-control"><a href="#cfg-control" class="headerlink" title="cfg_control"></a>cfg_control</h3><p>当前工程中重点确认：</p>
+<p>这里要注意它和 SSD MSI&#x2F;MSI-X 不是一回事。SSD 给 FPGA 发 MSI&#x2F;MSI-X，本质上是 SSD 向 FPGA 指定地址发 Memory Write TLP，应在 CQ 路径中按地址解码处理。<code>cfg_interrupt_int</code> 是 FPGA 这个 Root Port IP 自己主动发中断的接口，当前主线不使用。</p>
+<h3 id="2-3-5-Config-Control-Interface"><a href="#2-3-5-Config-Control-Interface" class="headerlink" title="2.3.5 Config Control Interface"></a>2.3.5 Config Control Interface</h3><p>这组接口用于控制 PCIe IP 的配置空间使能、链路训练、热复位、电源管理和错误注入等功能。</p>
+<p><img src="/images/nvme-host/2c-cfg-control.png" alt="cfg_control 接口"></p>
+<p>当前工程中重点确认：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_config_space_enable</span>     (<span class="number">1&#x27;b1</span>),</span><br><span class="line"><span class="variable">.cfg_link_training_enable</span>    (<span class="number">1&#x27;b1</span>),</span><br><span class="line"><span class="variable">.cfg_hot_reset_in</span>            (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_dsn</span>                     (<span class="number">64&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_ds_bus_number</span>           (<span class="number">8&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_ds_device_number</span>        (<span class="number">5&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_ds_function_number</span>      (<span class="number">3&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_subsys_vend_id</span>          (<span class="number">16&#x27;h10EE</span>),</span><br><span class="line"><span class="variable">.cfg_power_state_change_ack</span>  (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_err_cor_in</span>              (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_err_uncor_in</span>            (<span class="number">1&#x27;b0</span>)</span><br></pre></td></tr></table></figure>
 
-<p><img src="/images/nvme-host/2c-cfg-control.png" alt="cfg_control 接口"></p>
-<h3 id="cfg-fc-和-transmit-fc"><a href="#cfg-fc-和-transmit-fc" class="headerlink" title="cfg_fc 和 transmit_fc"></a>cfg_fc 和 transmit_fc</h3><p><code>cfg_fc_*</code> 应连接到 PCIe 封装层，用户逻辑继续遵守 AXI-Stream ready&#x2F;valid。实际调试 RQ 卡顿时，先看 <code>s_axis_rq_tvalid/tready</code>，再结合 credit 信号判断原因。</p>
+<p>其中 <code>cfg_config_space_enable</code> 和 <code>cfg_link_training_enable</code> 要保持为 1；<code>cfg_hot_reset_in</code> 当前保持 0，后续如果要做 SSD 热复位，可以再通过 VIO 或 AXI-Lite 单独控制。电源管理、VF、FLR 和错误注入相关端口当前不进入主状态机。</p>
+<h3 id="2-3-6-Configuration-Flow-Control-Interface"><a href="#2-3-6-Configuration-Flow-Control-Interface" class="headerlink" title="2.3.6 Configuration Flow Control Interface"></a>2.3.6 Configuration Flow Control Interface</h3><p><code>cfg_fc_*</code> 是 PCIe IP 暴露的 flow control credit 信息。它反映的是 PCIe 协议层不同类型 TLP 当前还有多少发送资源。</p>
 <p><img src="/images/nvme-host/2c-cfg-fc.png" alt="cfg_fc 接口"></p>
-<p><code>pcie_tfc_*</code> 更偏本地发送 buffer 余量。当前主逻辑仍以 AXI-Stream <code>tready</code> 为准，性能调试时再考虑接到 ILA 或 Alex 封装的可选端口。</p>
-<p><img src="/images/nvme-host/2c-transmit-fc.png" alt="transmit_fc 接口"></p>
-<h3 id="message-和-shared-logic"><a href="#message-和-shared-logic" class="headerlink" title="message 和 shared logic"></a>message 和 shared logic</h3><p>当前项目不通过 <code>cfg_msg_transmit_*</code> 主动发送 PCIe Message，也不处理 <code>cfg_msg_received_*</code> sideband message。当前只使用一个 PCIe Root Port IP，不共享底层 GT&#x2F;PLL 资源，因此 shared logic 相关输出也不接入用户逻辑。</p>
+<p>这组接口包括：</p>
+<ul>
+<li><code>cfg_fc_ph</code> &#x2F; <code>cfg_fc_pd</code>：Posted Header &#x2F; Posted Data credit，对 Memory Write 有意义。</li>
+<li><code>cfg_fc_nph</code> &#x2F; <code>cfg_fc_npd</code>：Non-Posted Header &#x2F; Non-Posted Data credit，对 Memory Read &#x2F; Config Read 有意义。</li>
+<li><code>cfg_fc_cplh</code> &#x2F; <code>cfg_fc_cpld</code>：Completion Header &#x2F; Completion Data credit，对 FPGA 通过 CC 返回 completion 有意义。</li>
+<li><code>cfg_fc_sel</code>：选择当前查询哪类 credit。</li>
+</ul>
+<p>当前项目把这些信号连接到 PCIe 封装层，用户逻辑仍然以 AXI-Stream <code>tready</code> 为直接节流条件。调试 RQ 卡顿时，先看 <code>s_axis_rq_tvalid/tready</code>，再结合 <code>cfg_fc_*</code> 判断是信用不足、IP 内部 buffer 满，还是上游没有发出有效 TLP。</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_fc_ph</span>     (cfg_fc_ph),</span><br><span class="line"><span class="variable">.cfg_fc_pd</span>     (cfg_fc_pd),</span><br><span class="line"><span class="variable">.cfg_fc_nph</span>    (cfg_fc_nph),</span><br><span class="line"><span class="variable">.cfg_fc_npd</span>    (cfg_fc_npd),</span><br><span class="line"><span class="variable">.cfg_fc_cplh</span>   (cfg_fc_cplh),</span><br><span class="line"><span class="variable">.cfg_fc_cpld</span>   (cfg_fc_cpld),</span><br><span class="line"><span class="variable">.cfg_fc_sel</span>    (cfg_fc_sel)</span><br></pre></td></tr></table></figure>
+
+<h3 id="2-3-7-Configuration-Transmit-Message-Interface"><a href="#2-3-7-Configuration-Transmit-Message-Interface" class="headerlink" title="2.3.7 Configuration Transmit Message Interface"></a>2.3.7 Configuration Transmit Message Interface</h3><p>当前项目不通过该侧边带接口主动发送 PCIe Message：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_msg_transmit</span>       (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_msg_transmit_type</span>  (<span class="number">3&#x27;b000</span>),</span><br><span class="line"><span class="variable">.cfg_msg_transmit_data</span>  (<span class="number">32&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_msg_transmit_done</span>  ()</span><br></pre></td></tr></table></figure>
+
 <p><img src="/images/nvme-host/2c-msg-tx.png" alt="msg transmit 接口"></p>
+<p>这组接口主要用于 LTR、OBFF、PME 等 PCIe message。当前 NVMe 基础读写路径不依赖这些消息，主要数据和控制路径仍然走 RQ&#x2F;RC&#x2F;CQ&#x2F;CC。</p>
+<h3 id="2-3-8-Configuration-Received-Message-Interface"><a href="#2-3-8-Configuration-Received-Message-Interface" class="headerlink" title="2.3.8 Configuration Received Message Interface"></a>2.3.8 Configuration Received Message Interface</h3><p>当前不处理 PCIe sideband message，输出悬空：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_msg_received</span>       (),</span><br><span class="line"><span class="variable">.cfg_msg_received_data</span>  (),</span><br><span class="line"><span class="variable">.cfg_msg_received_type</span>  ()</span><br></pre></td></tr></table></figure>
+
 <p><img src="/images/nvme-host/2c-msg-rx.png" alt="msg received 接口"></p>
+<p>如果后续要记录 PME、错误报告或 LTR 这类消息，可以把这些输出接到状态寄存器或 ILA。当前版本不把它们接入 NVMe 主流程。</p>
+<h3 id="2-3-9-Per-Function-Status"><a href="#2-3-9-Per-Function-Status" class="headerlink" title="2.3.9 Per Function Status"></a>2.3.9 Per Function Status</h3><p><code>cfg_per_func_status</code> 不是主数据链路必需项，但适合上板调试。它可以用来观察 Link Speed、Link Width、Max Payload Size、Max Read Request Size 等状态。</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_per_func_status_control</span> (<span class="number">3&#x27;b010</span>),</span><br><span class="line"><span class="variable">.cfg_per_func_status_data</span>    ()</span><br></pre></td></tr></table></figure>
+
+<p>当前版本可以先固定选择一个 index，后续需要时把 <code>cfg_per_func_status_data</code> 接入 ILA 或 AXI-Lite 只读状态寄存器。</p>
+<h3 id="2-3-10-Transmit-Flow-Control"><a href="#2-3-10-Transmit-Flow-Control" class="headerlink" title="2.3.10 Transmit Flow Control"></a>2.3.10 Transmit Flow Control</h3><p><code>pcie_tfc_*</code> 更偏本地发送 buffer 余量，和 <code>cfg_fc_*</code> 不完全一样。<code>cfg_fc_*</code> 反映协议 credit，<code>pcie_tfc_*</code> 更接近 Xilinx IP 内部 transmit buffer 的剩余空间。</p>
+<p><img src="/images/nvme-host/2c-transmit-fc.png" alt="transmit_fc 接口"></p>
+<p>当前主逻辑仍以 AXI-Stream <code>tready</code> 为准：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">tready = 1：发送状态机可以在 valid 有效时推进</span><br><span class="line">tready = 0：保持当前 header/data，不推进 beat 计数</span><br></pre></td></tr></table></figure>
+
+<p>如果后续启用 Alex 封装里的 <code>TX_FC_ENABLE</code>，再把 <code>pcie_tfc_nph_av</code>、<code>pcie_tfc_npd_av</code> 等端口补接进去。</p>
+<h3 id="2-3-11-Internal-Shared-Logic"><a href="#2-3-11-Internal-Shared-Logic" class="headerlink" title="2.3.11 Internal Shared Logic"></a>2.3.11 Internal Shared Logic</h3><p>当前只使用一个 PCIe Root Port IP，不共享底层 GT&#x2F;PLL 资源，因此 shared logic 相关输出保持不接入用户逻辑。</p>
 <p><img src="/images/nvme-host/2c-shared-logic.png" alt="shared logic 接口"></p>
-<h2 id="设计注意事项"><a href="#设计注意事项" class="headerlink" title="设计注意事项"></a>设计注意事项</h2><p>这部分是当前工程里最容易在上板时暴露问题的设计点。</p>
-<h3 id="时钟和复位边界"><a href="#时钟和复位边界" class="headerlink" title="时钟和复位边界"></a>时钟和复位边界</h3><p><code>sys_clk</code> &#x2F; <code>sys_clk_gt</code> 来自板卡 PCIe 参考时钟路径；<code>user_clk</code> 是 PCIe IP 输出给用户逻辑的 AXI-Stream 时钟。RQ&#x2F;RC&#x2F;CQ&#x2F;CC、NVMe 初始化、command、queue、PRP、memory 等主逻辑默认都放在 <code>user_clk</code> 域。用户逻辑复位跟随 <code>user_reset</code>，内部可转换成 <code>user_rst_n</code>。</p>
-<h3 id="Root-Port-和-Endpoint-角色"><a href="#Root-Port-和-Endpoint-角色" class="headerlink" title="Root Port 和 Endpoint 角色"></a>Root Port 和 Endpoint 角色</h3><p>当前 FPGA 是 Root Port，SSD 是 Endpoint。Xilinx IP 配置页里的 PF0 BAR 是 FPGA 这个 PCIe 端口自己的 BAR；NVMe 初始化里真正要访问的是 SSD 配置空间里的 BAR0。SSD BAR0 分配完成后，FPGA 才能通过 <code>SSD_BAR0_BASE + offset</code> 访问 CAP、CC、CSTS、AQA、ASQ、ACQ、doorbell 等寄存器。</p>
-<h3 id="MPS-MRRS-和数据分包"><a href="#MPS-MRRS-和数据分包" class="headerlink" title="MPS &#x2F; MRRS 和数据分包"></a>MPS &#x2F; MRRS 和数据分包</h3><p>PCIe IP 配置页里填写的是能力上限，实际运行时还要看链路协商和配置后的 MPS&#x2F;MRRS。上板时如果实际 MPS 是 128B，completion data 和 Memory Write payload 就要按这个边界切分。</p>
+<p>如果后续同一个 GT Quad 里还要跑 Ethernet、Aurora 或其他高速 IP，再回头检查 Shared Logic 配置。当前版本保持默认连接即可。</p>
+<h3 id="2-3-12-IP-配置页面记录"><a href="#2-3-12-IP-配置页面记录" class="headerlink" title="2.3.12 IP 配置页面记录"></a>2.3.12 IP 配置页面记录</h3><p>原笔记里 <code>2C</code> 还引用了“第一页配置”到“第五页配置”。这些页面对应 PCIe IP GUI 里的配置项，整理后主要结论如下。</p>
+<table>
+<thead>
+<tr>
+<th>配置页</th>
+<th>当前项目中的关注点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>第一页 Basic</td>
+<td>选择 Root Port、Gen3 x4、256-bit AXI-ST、125 MHz user clock、100 MHz reference clock</td>
+</tr>
+<tr>
+<td>第二页 Capabilities</td>
+<td>MPS 是能力声明，实际运行要看协商值；Extended Tag 当前暂不开</td>
+</tr>
+<tr>
+<td>第三页 PF0 IDs</td>
+<td>Root Port 自身身份保持 Bridge device 语义，真正枚举的是 SSD endpoint</td>
+</tr>
+<tr>
+<td>第四页 Class &#x2F; Misc</td>
+<td>当前保持与 Root Port 角色匹配，不作为主功能调试点</td>
+</tr>
+<tr>
+<td>第五页 BAR</td>
+<td>IP GUI 里的 BAR 是 FPGA 自己的 BAR，不是 SSD BAR0；SSD BAR0 要在枚举阶段单独探测和分配</td>
+</tr>
+</tbody></table>
+<p>这里最容易混淆的是第五页 BAR。当前工程真正写 NVMe CAP、CC、CSTS、AQA、ASQ、ACQ、doorbell 的地址来自 SSD BAR0，不是 PCIe IP 自己 PF0 BAR 的地址。</p>
+<h3 id="2-3-13-RQ-接口：FPGA-主动发起请求"><a href="#2-3-13-RQ-接口：FPGA-主动发起请求" class="headerlink" title="2.3.13 RQ 接口：FPGA 主动发起请求"></a>2.3.13 RQ 接口：FPGA 主动发起请求</h3><p>RQ 是 Requester Request。用户逻辑通过 RQ 把请求 TLP 送进 PCIe IP。</p>
+<p><img src="/images/nvme-host/2c-rq-interface.png" alt="RQ 接口"></p>
+<p>RQ 数据包以 128-bit descriptor 开始，如果是 Memory Write 或 Message 这类带 payload 的 TLP，descriptor 后面继续跟 payload。当前 256-bit 接口下，descriptor 通常可以在第一个 beat 中放下。</p>
+<p><img src="/images/nvme-host/2c-rq-desc.png" alt="RQ Descriptor"></p>
+<p>当前项目中 RQ 主要承担：</p>
+<ul>
+<li>PCIe 枚举阶段的 Config Read &#x2F; Config Write。</li>
+<li>NVMe 初始化阶段的 SSD BAR0 寄存器读写。</li>
+<li>写 ASQ&#x2F;IOSQ&#x2F;ACQ&#x2F;IOCQ doorbell。</li>
+<li>某些 outbound Memory Write &#x2F; Memory Read 测试路径。</li>
+</ul>
+<p>实现时需要注意：</p>
+<ul>
+<li>RQ 是 <code>s_axis_rq_*</code>，方向是用户逻辑到 PCIe IP。</li>
+<li><code>s_axis_rq_tvalid &amp;&amp; s_axis_rq_tready</code> 成立时，当前 beat 才真正发送。</li>
+<li><code>tready=0</code> 时，descriptor、payload、tkeep、tlast、tuser 都要保持稳定。</li>
+<li>Memory Read 通常没有 payload，但需要正确填写 tag、address、length、first_be&#x2F;last_be。</li>
+<li>Memory Write 需要按实际 MPS 切分 payload，当前上板测试里 MPS 按 128B 处理时，一包 128B 对应 4 拍 256-bit 数据。</li>
+</ul>
+<p>在本项目中，枚举和初始化能不能继续，首先看 RQ 发出去的 Config Read &#x2F; Memory Read 是否能在 RC 口收到 completion。IO 阶段能不能启动，主要看 doorbell Memory Write 是否正确从 RQ 发出。</p>
+<h3 id="2-3-14-RC-接口：FPGA-请求的返回-completion"><a href="#2-3-14-RC-接口：FPGA-请求的返回-completion" class="headerlink" title="2.3.14 RC 接口：FPGA 请求的返回 completion"></a>2.3.14 RC 接口：FPGA 请求的返回 completion</h3><p>RC 是 Requester Completion。凡是 FPGA 通过 RQ 发出的 non-posted request，例如 Config Read、Memory Read，对端返回的 completion 会从 RC 口进入用户逻辑。</p>
+<p><img src="/images/nvme-host/2c-rc-interface.png" alt="RC 接口"></p>
+<p>RC 数据包以 96-bit descriptor 开始，后面可能带 completion data。无数据 completion 和带数据 completion 都走同一个接口。</p>
+<p><img src="/images/nvme-host/2c-rc-desc.png" alt="RC Descriptor"></p>
+<p>当前项目中 RC 主要用于：</p>
+<ul>
+<li>枚举阶段读取 SSD Vendor ID、Device ID、Class Code、BAR mask 等配置空间内容。</li>
+<li>NVMe 初始化阶段读取 CAP、VS、CSTS 等寄存器。</li>
+<li>检查 RQ 发出的 read request 是否有 completion 返回。</li>
+</ul>
+<p>实现时需要注意：</p>
+<ul>
+<li>RC 是 <code>m_axis_rc_*</code>，方向是 PCIe IP 到用户逻辑。</li>
+<li>completion descriptor 中的 tag &#x2F; requester id &#x2F; byte count &#x2F; lower address 等字段要和发出的请求对应。</li>
+<li>配置读和寄存器读返回的数据需要按 DW 顺序解析，之前上板调试中大小端和 DW 排列是容易出错的地方。</li>
+<li>如果一笔读取被拆成多个 completion，用户逻辑需要能按照 tag 和 byte count 继续接收。</li>
+<li><code>m_axis_rc_tready</code> 可以拉低形成 backpressure，但拉低后要保证上游状态机不会错误消费数据。</li>
+</ul>
+<p>在当前工程里，RC 解析正确后，枚举状态机才能知道 SSD 是否存在、BAR0 大小是多少、CSTS.RDY 是否已经拉高。</p>
+<h3 id="2-3-15-CQ-接口：SSD-主动访问-FPGA-地址空间"><a href="#2-3-15-CQ-接口：SSD-主动访问-FPGA-地址空间" class="headerlink" title="2.3.15 CQ 接口：SSD 主动访问 FPGA 地址空间"></a>2.3.15 CQ 接口：SSD 主动访问 FPGA 地址空间</h3><p>CQ 是 Completer Request。它表示对端 SSD 主动访问 FPGA 暴露出来的地址空间。NVMe 运行时大量关键动作都从 CQ 进入 FPGA。</p>
+<p><img src="/images/nvme-host/2c-cq-interface.png" alt="CQ 接口"></p>
+<p>CQ 数据包以 128-bit descriptor 开始，Memory Write 会带 payload，Memory Read 不带 payload 但需要 FPGA 后续通过 CC 返回 completion。</p>
+<p><img src="/images/nvme-host/2c-cq-desc.png" alt="CQ Descriptor"></p>
+<p>当前项目中 CQ 主要承载：</p>
+<ul>
+<li>SSD 读取 ASQ&#x2F;IOSQ 中的 SQE。</li>
+<li>SSD 读取 PRP List Window。</li>
+<li>SSD 读取 FPGA memory window 中待写入 SSD 的数据。</li>
+<li>SSD 通过 Memory Write 写回 ACQ&#x2F;IOCQ completion。</li>
+<li>SSD 通过 Memory Write 把读出的数据写回 FPGA memory window。</li>
+</ul>
+<p>因此 CQ route 是整个工程中很关键的一层。它需要根据 TLP address 把请求分发到不同模块：</p>
+<table>
+<thead>
+<tr>
+<th>CQ 地址范围</th>
+<th>路由目标</th>
+<th>处理方式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ASQ &#x2F; IOSQ</td>
+<td>queue 模块</td>
+<td>SSD MemRd SQE，FPGA 通过 CC 返回 SQE 内容</td>
+</tr>
+<tr>
+<td>ACQ &#x2F; IOCQ</td>
+<td>queue 模块</td>
+<td>SSD MemWr CQE，FPGA 更新 CQ lane 并触发 completion 处理</td>
+</tr>
+<tr>
+<td>PRP List Window</td>
+<td>PRP 模块</td>
+<td>SSD MemRd PRP list，FPGA 通过 CC 返回 PRP entry</td>
+</tr>
+<tr>
+<td>Memory Window</td>
+<td>memory 模块</td>
+<td>SSD MemRd 时返回 data，SSD MemWr 时写入 data buffer</td>
+</tr>
+</tbody></table>
+<p>实现时需要注意：</p>
+<ul>
+<li>CQ 是 <code>m_axis_cq_*</code>，方向是 PCIe IP 到用户逻辑。</li>
+<li>Memory Write 的有效字节要结合 <code>tkeep</code>、<code>byte_en</code> 或 first&#x2F;last byte enable 处理。</li>
+<li>Memory Read 请求不能只被接收，还要产生对应 CC completion。</li>
+<li>CQ route 的地址窗口要和初始化写给 SSD 的 ASQ&#x2F;ACQ&#x2F;IOSQ&#x2F;IOCQ&#x2F;PRP&#x2F;memory 地址一致。</li>
+<li>如果 CQE 写回的 SQID &#x2F; CID 和 command_record 不匹配，要进入 mismatch&#x2F;drop 统计，而不是直接当作正常 completion。</li>
+</ul>
+<p>从调试角度看，FPGA 写 doorbell 之后，如果 CQ 口完全没有 SSD 读 SQE 的请求，通常说明 doorbell 地址、队列地址、队列 enable 或 NVMe 初始化状态有问题。</p>
+<h3 id="2-3-16-CC-接口：FPGA-响应-SSD-的读取请求"><a href="#2-3-16-CC-接口：FPGA-响应-SSD-的读取请求" class="headerlink" title="2.3.16 CC 接口：FPGA 响应 SSD 的读取请求"></a>2.3.16 CC 接口：FPGA 响应 SSD 的读取请求</h3><p>CC 是 Completer Completion。当 SSD 通过 CQ 发起 Memory Read，FPGA 需要通过 CC 返回 completion 或 completion data。</p>
+<p><img src="/images/nvme-host/2c-cc-interface.png" alt="CC 接口"></p>
+<p>CC 数据包以 96-bit descriptor 开始，带数据的 completion 后面跟 payload。对于大于 MPS 的数据，需要拆成多个 completion。</p>
+<p><img src="/images/nvme-host/2c-cc-desc.png" alt="CC Descriptor"></p>
+<p>当前项目中 CC 主要返回：</p>
+<ul>
+<li>ASQ &#x2F; IOSQ 中的 SQE。</li>
+<li>PRP list entry。</li>
+<li>memory window 中的数据。</li>
+</ul>
+<p>实现时需要注意：</p>
+<ul>
+<li>CC 是 <code>s_axis_cc_*</code>，方向是用户逻辑到 PCIe IP。</li>
+<li>每个 CQ Memory Read 都要有对应 completion。</li>
+<li>completion status 正常时填 Successful Completion。</li>
+<li>数据长度超过 MPS 时要拆成多个 CplD。</li>
+<li><code>s_axis_cc_tvalid &amp;&amp; s_axis_cc_tready</code> 成立时才推进 payload beat 计数。</li>
+<li><code>tready=0</code> 时 header&#x2F;data&#x2F;tkeep&#x2F;tlast 必须保持稳定。</li>
+</ul>
+<p>之前上板调试中，CC 路径最容易出现的问题是最后一拍 header&#x2F;data 错位，或者 <code>ready</code> 拉低时状态机仍然推进，导致 SSD 收到的 CplD 长度或内容不对。这个问题通常要通过 ILA 同时抓 CQ 请求 header、CC 返回 header、payload beat count 和 ready&#x2F;valid 来定位。</p>
+<h2 id="2-4-设计注意事项"><a href="#2-4-设计注意事项" class="headerlink" title="2.4 设计注意事项"></a>2.4 设计注意事项</h2><p>这一节对应原来的 <code>2D.设计注意事项.md</code>，记录当前工程里容易在上板时暴露的问题。</p>
+<h3 id="2-4-1-时钟和复位边界"><a href="#2-4-1-时钟和复位边界" class="headerlink" title="2.4.1 时钟和复位边界"></a>2.4.1 时钟和复位边界</h3><p><code>sys_clk</code> &#x2F; <code>sys_clk_gt</code> 来自板卡 PCIe 参考时钟路径；<code>user_clk</code> 是 PCIe IP 输出给用户逻辑的 AXI-Stream 时钟。RQ&#x2F;RC&#x2F;CQ&#x2F;CC、NVMe 初始化、command、queue、PRP、memory 等主逻辑默认都放在 <code>user_clk</code> 域。用户逻辑复位跟随 <code>user_reset</code>，内部可转换成 <code>user_rst_n</code>。</p>
+<p>如果外部 AXI 或 AXI-Lite 不在 <code>user_clk</code> 域，需要明确做 CDC。调试时不要只看外部复位是否释放，也要看 PCIe IP 输出的 <code>user_reset</code> 和 <code>user_lnk_up</code>。</p>
+<h3 id="2-4-2-Root-Port-和-Endpoint-角色"><a href="#2-4-2-Root-Port-和-Endpoint-角色" class="headerlink" title="2.4.2 Root Port 和 Endpoint 角色"></a>2.4.2 Root Port 和 Endpoint 角色</h3><p>当前 FPGA 是 Root Port，SSD 是 Endpoint。Xilinx IP 配置页里的 PF0 BAR 是 FPGA 这个 PCIe 端口自己的 BAR；NVMe 初始化里真正要访问的是 SSD 配置空间里的 BAR0。SSD BAR0 分配完成后，FPGA 才能通过 <code>SSD_BAR0_BASE + offset</code> 访问 CAP、CC、CSTS、AQA、ASQ、ACQ、doorbell 等寄存器。</p>
+<h3 id="2-4-3-MPS-MRRS-和数据分包"><a href="#2-4-3-MPS-MRRS-和数据分包" class="headerlink" title="2.4.3 MPS &#x2F; MRRS 和数据分包"></a>2.4.3 MPS &#x2F; MRRS 和数据分包</h3><p>PCIe IP 配置页里填写的是能力上限，实际运行时还要看链路协商和配置后的 MPS&#x2F;MRRS。上板时如果实际 MPS 是 128B，completion data 和 Memory Write payload 就要按这个边界切分。</p>
 <p>当前用户侧 AXI-Stream 是 256-bit，一拍 32B。为了效率，数据 payload 不应长期只发 32B 小包；但每个 TLP 也不能超过实际 MPS。更合理的做法是按 MPS 聚合，例如 128B 对应 4 拍 256-bit 数据。</p>
-<h3 id="AXI-Stream-计数跟随-fire"><a href="#AXI-Stream-计数跟随-fire" class="headerlink" title="AXI-Stream 计数跟随 fire"></a>AXI-Stream 计数跟随 fire</h3><p>RQ、RC、CQ、CC 都是 ready&#x2F;valid 协议。内部状态机推进、地址递增、payload beat 计数、last 生成，都应跟随：</p>
+<h3 id="2-4-4-AXI-Stream-计数跟随-fire"><a href="#2-4-4-AXI-Stream-计数跟随-fire" class="headerlink" title="2.4.4 AXI-Stream 计数跟随 fire"></a>2.4.4 AXI-Stream 计数跟随 fire</h3><p>RQ、RC、CQ、CC 都是 ready&#x2F;valid 协议。内部状态机推进、地址递增、payload beat 计数、last 生成，都应跟随：</p>
 <figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">fire = valid &amp;&amp; ready;</span><br></pre></td></tr></table></figure>
 
-<p>上板时 <code>ready</code> 被 PCIe IP 拉低是正常现象，如果状态机在 <code>ready=0</code> 时继续修改 header&#x2F;data，很容易出现最后一拍错位、length 不一致或 completion 内容重复。</p>
-<h3 id="Queue、Doorbell-和-PRP"><a href="#Queue、Doorbell-和-PRP" class="headerlink" title="Queue、Doorbell 和 PRP"></a>Queue、Doorbell 和 PRP</h3><p>NVMe 命令提交流程里，doorbell 不能早于 SQE 写入：</p>
+<p>上板时 <code>ready</code> 被 PCIe IP 拉低是正常现象。如果状态机在 <code>ready=0</code> 时继续修改 header&#x2F;data，很容易出现最后一拍错位、length 不一致或 completion 内容重复。</p>
+<h3 id="2-4-5-Queue、Doorbell-和-PRP"><a href="#2-4-5-Queue、Doorbell-和-PRP" class="headerlink" title="2.4.5 Queue、Doorbell 和 PRP"></a>2.4.5 Queue、Doorbell 和 PRP</h3><p>NVMe 命令提交流程里，doorbell 不能早于 SQE 写入：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">构造 SQE</span><br><span class="line">-&gt; 写入 ASQ/IOSQ</span><br><span class="line">-&gt; 更新 SQ tail</span><br><span class="line">-&gt; 写 doorbell</span><br><span class="line">-&gt; SSD 再根据队列地址读取 SQE</span><br></pre></td></tr></table></figure>
 
 <p>如果做 doorbell 聚合，需要保证聚合只影响通知频率，不改变队列里 SQE 已经可读这个事实。CQ 侧还要注意 phase bit，head wrap 时 phase 翻转需要用寄存器保存，不能只靠单拍组合判断。</p>
 <p>当前 PRP 设计适合连续地址和固定 memory window 的读写测试。后续如果要支持随机物理页、复杂 scatter-gather 或不同 namespace 的大规模并发，需要把 PRP list 做成真正可缓存、可索引、可回收的 RAM 表。</p>
-<h3 id="CID-生命周期"><a href="#CID-生命周期" class="headerlink" title="CID 生命周期"></a>CID 生命周期</h3><p>CID 不能只作为一个递增计数器使用。当前 command 模块需要记录：</p>
+<h3 id="2-4-6-CID-生命周期"><a href="#2-4-6-CID-生命周期" class="headerlink" title="2.4.6 CID 生命周期"></a>2.4.6 CID 生命周期</h3><p>CID 不能只作为一个递增计数器使用。当前 command 模块需要记录：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">CID -&gt; queue_id / command_type / opcode / state / issue_time / context</span><br></pre></td></tr></table></figure>
 
 <p>completion 回来后，要根据 CID 和 SQID 做匹配。匹配成功再回收 CID；出现 mismatch、timeout、disabled queue、drop 等情况时，应记录错误计数和上下文，避免问题只表现成“命令没有 done”。</p>
-<h3 id="当前边界"><a href="#当前边界" class="headerlink" title="当前边界"></a>当前边界</h3><p>当前版本更适合作为轻量级 NVMe Host Controller 原型：</p>
+<h3 id="2-4-7-ILA-调试优先级"><a href="#2-4-7-ILA-调试优先级" class="headerlink" title="2.4.7 ILA 调试优先级"></a>2.4.7 ILA 调试优先级</h3><p>上板调试时建议按层级抓信号：</p>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>观察点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PCIe 链路</td>
+<td><code>user_lnk_up</code>、<code>user_rst_n</code>、<code>ltssm_state</code></td>
+</tr>
+<tr>
+<td>初始化</td>
+<td>枚举状态机、NVMe init 状态、queue init done</td>
+</tr>
+<tr>
+<td>RQ&#x2F;RC</td>
+<td>配置读写、寄存器读写、doorbell、completion</td>
+</tr>
+<tr>
+<td>CQ&#x2F;CC</td>
+<td>SSD 读 SQE &#x2F; PRP &#x2F; data，FPGA 返回 CplD</td>
+</tr>
+<tr>
+<td>command&#x2F;queue&#x2F;PRP</td>
+<td>CID、SQID、opcode、PRP 地址、completion 匹配</td>
+</tr>
+</tbody></table>
+<p>不要一开始只抓一个很宽的拼接总线。更适合的做法是把关键路径拆成几组 ILA，每组信号都打一拍，触发条件也围绕具体事件设置。</p>
+<h3 id="2-4-8-当前边界"><a href="#2-4-8-当前边界" class="headerlink" title="2.4.8 当前边界"></a>2.4.8 当前边界</h3><p>当前版本更适合作为轻量级 NVMe Host Controller 原型：</p>
 <ul>
 <li>支持固定地址窗口下的 Admin Queue、IO Queue 和 16KB 读写闭环。</li>
 <li>支持基础多队列结构、CID 匹配、PRP list 响应和状态统计。</li>
