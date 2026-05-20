@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-labelledby="title desc">
+  <title id="title">NVMe over PCIe basic concepts used by this project</title>
+  <desc id="desc">Protocol layers, queue model, doorbell, CID, and PRP relationships.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.4; rx: 8; ry: 8; }
+      .blue { fill: #eff6ff; }
+      .green { fill: #f0fdf4; }
+      .orange { fill: #fff7ed; }
+      .purple { fill: #faf5ff; }
+      .gray { fill: #f8fafc; }
+      .box-title { font-size: 17px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .lane { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .tag { font-size: 13px; fill: #0369a1; font-weight: 700; }
+      .mono { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 13px; fill: #334155; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="620" fill="#ffffff"/>
+  <text x="44" y="48" class="title">NVMe over PCIe：本项目需要掌握的最小概念集</text>
+  <text x="44" y="75" class="subtitle">PCIe 负责搬运 TLP，NVMe 定义命令、队列、doorbell、CID 和 PRP 语义</text>
+
+  <rect x="60" y="120" width="250" height="80" class="box blue"/>
+  <text x="84" y="153" class="box-title">应用控制层</text>
+  <text x="84" y="181" class="small">AXI-Lite / VIO / test FSM</text>
+
+  <rect x="60" y="225" width="250" height="100" class="box orange"/>
+  <text x="84" y="258" class="box-title">NVMe 层</text>
+  <text x="84" y="286" class="small">Queue / Command / CQE</text>
+  <text x="84" y="309" class="small">Doorbell / CID / PRP</text>
+
+  <rect x="60" y="350" width="250" height="100" class="box green"/>
+  <text x="84" y="383" class="box-title">PCIe TLP 层</text>
+  <text x="84" y="411" class="small">RQ / RC / CQ / CC</text>
+  <text x="84" y="434" class="small">MemRd / MemWr / CplD</text>
+
+  <rect x="60" y="475" width="250" height="70" class="box gray"/>
+  <text x="84" y="508" class="box-title">PCIe Link / PHY</text>
+  <text x="84" y="535" class="small">Xilinx PCIe Gen3 IP</text>
+
+  <path d="M185 200 L185 223" class="lane"/>
+  <path d="M185 325 L185 348" class="lane"/>
+  <path d="M185 450 L185 473" class="lane"/>
+
+  <rect x="405" y="125" width="315" height="165" class="box orange"/>
+  <text x="430" y="158" class="box-title">Queue 模型</text>
+  <text x="430" y="191" class="mono">ASQ -&gt; Admin command</text>
+  <text x="430" y="216" class="mono">ACQ &lt;- Admin completion</text>
+  <text x="430" y="241" class="mono">IOSQ -&gt; Read/Write command</text>
+  <text x="430" y="266" class="mono">IOCQ &lt;- IO completion</text>
+
+  <rect x="815" y="125" width="290" height="165" class="box green"/>
+  <text x="840" y="158" class="box-title">Doorbell</text>
+  <text x="840" y="191" class="small">FPGA 写 SQE 到本地队列</text>
+  <text x="840" y="216" class="small">通过 RQ 写 SSD BAR0</text>
+  <text x="840" y="241" class="small">SSD 读取新的 SQE</text>
+  <text x="840" y="266" class="small">队列模块可做 doorbell 聚合</text>
+
+  <path d="M720 207 C755 207 775 207 812 207" class="lane"/>
+  <text x="739" y="190" class="tag">SQ tail update</text>
+
+  <rect x="405" y="345" width="315" height="165" class="box purple"/>
+  <text x="430" y="378" class="box-title">CID / Completion 匹配</text>
+  <text x="430" y="411" class="small">CID 池分配 command id</text>
+  <text x="430" y="436" class="small">record 保存 queue/opcode/state</text>
+  <text x="430" y="461" class="small">CQE 返回 CID 和 status</text>
+  <text x="430" y="486" class="small">匹配成功后回收 CID</text>
+
+  <rect x="815" y="345" width="290" height="165" class="box blue"/>
+  <text x="840" y="378" class="box-title">PRP 数据寻址</text>
+  <text x="840" y="411" class="small">PRP1：第一个 page 地址</text>
+  <text x="840" y="436" class="small">PRP2：第二个 page 或 list 地址</text>
+  <text x="840" y="461" class="small">PRP list：更多 page 地址</text>
+  <text x="840" y="486" class="small">当前工程支持连续地址闭环</text>
+
+  <path d="M720 427 C755 427 775 427 812 427" class="lane"/>
+  <text x="742" y="410" class="tag">command context</text>
+</svg>

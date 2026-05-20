@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="560" viewBox="0 0 1180 560" role="img" aria-labelledby="title desc">
+  <title id="title">FPGA NVMe Host Controller closed loop</title>
+  <desc id="desc">A high level closed loop of the FPGA NVMe host controller project.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <linearGradient id="host" x1="0" x2="1">
+      <stop offset="0" stop-color="#eef6ff"/>
+      <stop offset="1" stop-color="#f8fbff"/>
+    </linearGradient>
+    <linearGradient id="ssd" x1="0" x2="1">
+      <stop offset="0" stop-color="#ecfdf3"/>
+      <stop offset="1" stop-color="#f7fff9"/>
+    </linearGradient>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { stroke: #334155; stroke-width: 1.5; rx: 8; ry: 8; }
+      .box-title { font-size: 18px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .lane { stroke: #334155; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .dashed { stroke-dasharray: 7 6; }
+      .tag { font-size: 13px; fill: #0369a1; font-weight: 700; }
+      .note { font-size: 14px; fill: #475569; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="560" fill="#ffffff"/>
+  <text x="44" y="48" class="title">项目闭环：FPGA 侧轻量级 NVMe Host Controller</text>
+  <text x="44" y="75" class="subtitle">目标是把 PCIe/NVMe 初始化、命令提交、PRP 寻址、队列完成匹配和 AXI 数据缓存串成可运行闭环</text>
+
+  <rect x="50" y="120" width="310" height="270" fill="url(#host)" class="box"/>
+  <text x="80" y="158" class="box-title">外部控制 / 数据源</text>
+  <text x="80" y="195" class="small">AXI-Lite：写命令寄存器</text>
+  <text x="80" y="222" class="small">AXI4：写入或读出数据缓存</text>
+  <text x="80" y="249" class="small">VIO：板级调试触发</text>
+  <text x="80" y="276" class="small">ILA：抓取状态机和 TLP</text>
+
+  <rect x="440" y="105" width="330" height="305" fill="#fff7ed" class="box"/>
+  <text x="470" y="143" class="box-title">FPGA SSD 控制器</text>
+  <text x="470" y="180" class="small">axi_lite_ctl：配置与命令入口</text>
+  <text x="470" y="207" class="small">prp_ctl：PRP1/PRP2 与 PRP list</text>
+  <text x="470" y="234" class="small">command_ctl：CID / record / done</text>
+  <text x="470" y="261" class="small">nvme_queue_ctl：ASQ/ACQ/IOSQ/IOCQ</text>
+  <text x="470" y="288" class="small">pcie_memory_clt_top：数据窗口</text>
+  <text x="470" y="315" class="small">SSD_pcie_us：RQ/CQ/CC route</text>
+
+  <rect x="850" y="120" width="280" height="270" fill="url(#ssd)" class="box"/>
+  <text x="880" y="158" class="box-title">NVMe SSD</text>
+  <text x="880" y="195" class="small">读取 SQE / PRP / data</text>
+  <text x="880" y="222" class="small">执行 Read / Write 命令</text>
+  <text x="880" y="249" class="small">写回 CQE completion</text>
+  <text x="880" y="276" class="small">根据 doorbell 拉取新命令</text>
+
+  <path d="M360 205 C390 205 405 205 435 205" class="lane"/>
+  <text x="374" y="188" class="tag">AXI-Lite command</text>
+  <path d="M360 300 C390 300 405 300 435 300" class="lane"/>
+  <text x="384" y="326" class="tag">AXI4 data buffer</text>
+
+  <path d="M770 190 C805 190 815 190 848 190" class="lane"/>
+  <text x="784" y="173" class="tag">RQ：doorbell</text>
+  <path d="M848 255 C815 255 805 255 772 255" class="lane"/>
+  <text x="786" y="241" class="tag">CQ：SSD MemRd/MemWr</text>
+  <path d="M770 325 C805 325 815 325 848 325" class="lane"/>
+  <text x="784" y="351" class="tag">CC：CplD 返回数据</text>
+
+  <path d="M990 390 C990 480 210 480 210 395" class="lane dashed"/>
+  <text x="458" y="505" class="note">completion -> CID 匹配 -> done/status -> 上层测试状态机读取结果</text>
+
+  <rect x="64" y="430" width="180" height="58" fill="#f8fafc" stroke="#cbd5e1" rx="8"/>
+  <text x="86" y="455" class="small">init_done</text>
+  <text x="86" y="477" class="small">queue_init_done</text>
+  <rect x="280" y="430" width="200" height="58" fill="#f8fafc" stroke="#cbd5e1" rx="8"/>
+  <text x="302" y="455" class="small">io_wr_done / io_rd_done</text>
+  <text x="302" y="477" class="small">error / timeout count</text>
+</svg>

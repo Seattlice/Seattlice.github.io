@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+  
+  <title>FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置 | LI HUALOU</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="这一篇主要记录项目里用到的 PCIe &#x2F; NVMe 基础概念、Xilinx PCIe IP 配置，以及我在设计时反复确认的一些注意事项。它不是完整协议手册，更像是围绕当前工程整理出来的工作笔记。  PCIe 和 NVMe 的关系NVMe SSD 底层通过 PCIe 传输数据，但 NVMe 和 PCIe 不是同一层协议。 12PCIe：负责把 request &#x2F; completion &#x2F;">
+<meta property="og:type" content="article">
+<meta property="og:title" content="FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置">
+<meta property="og:url" content="https://seattlice.github.io/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/index.html">
+<meta property="og:site_name" content="LI HUALOU">
+<meta property="og:description" content="这一篇主要记录项目里用到的 PCIe &#x2F; NVMe 基础概念、Xilinx PCIe IP 配置，以及我在设计时反复确认的一些注意事项。它不是完整协议手册，更像是围绕当前工程整理出来的工作笔记。  PCIe 和 NVMe 的关系NVMe SSD 底层通过 PCIe 传输数据，但 NVMe 和 PCIe 不是同一层协议。 12PCIe：负责把 request &#x2F; completion &#x2F;">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/nvme-over-pcie-basics.svg">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-ip-interfaces.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-clock-interface.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-cfg-interface.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-tlp-interface.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-ku060-pcie-location.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-queue-empty-full.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-4kb-align.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-nvme-command-1.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2b-nvme-command-2.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-port-list.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-clock.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cfg-mgmt.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cfg-interrupt.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cfg-control.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-cfg-fc.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-transmit-fc.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-msg-tx.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-msg-rx.png">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/2c-shared-logic.png">
+<meta property="article:published_time" content="2026-05-20T06:45:00.000Z">
+<meta property="article:modified_time" content="2026-05-20T06:45:00.000Z">
+<meta property="article:author" content="LI HUALOU">
+<meta property="article:tag" content="NVMe">
+<meta property="article:tag" content="PCIe">
+<meta property="article:tag" content="FPGA">
+<meta property="article:tag" content="Xilinx">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://seattlice.github.io/images/nvme-host/nvme-over-pcie-basics.svg">
+  
+    <link rel="alternate" href="/atom.xml" title="LI HUALOU" type="application/atom+xml">
+  
+  
+    <link rel="shortcut icon" href="/favicon.png">
+  
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+    
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+
+  
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fork-awesome@1.2.0/css/fork-awesome.min.css">
+
+<meta name="generator" content="Hexo 7.3.0"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">LI HUALOU</a>
+      </h1>
+      
+        <h2 id="subtitle-wrap">
+          <a href="/" id="subtitle">HUALOU</a>
+        </h2>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+        
+          <a class="nav-icon" href="/atom.xml" title="RSS 订阅"><span class="fa fa-rss"></span></a>
+        
+        <a class="nav-icon nav-search-btn" title="搜索"><span class="fa fa-search"></span></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="搜索"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="https://seattlice.github.io"></form>
+      </div>
+    </div>
+  </div>
+</header>
+
+      <div class="outer">
+        <section id="main"><article id="post-fpga-nvme-host-02-pcie-nvme-basics" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T06:45:00.000Z" itemprop="datePublished">2026-05-20</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="p-name article-title" itemprop="headline name">
+      FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <p>这一篇主要记录项目里用到的 PCIe &#x2F; NVMe 基础概念、Xilinx PCIe IP 配置，以及我在设计时反复确认的一些注意事项。它不是完整协议手册，更像是围绕当前工程整理出来的工作笔记。</p>
+<p><img src="/images/nvme-host/nvme-over-pcie-basics.svg" alt="NVMe over PCIe 基础概念关系"></p>
+<h2 id="PCIe-和-NVMe-的关系"><a href="#PCIe-和-NVMe-的关系" class="headerlink" title="PCIe 和 NVMe 的关系"></a>PCIe 和 NVMe 的关系</h2><p>NVMe SSD 底层通过 PCIe 传输数据，但 NVMe 和 PCIe 不是同一层协议。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">PCIe：负责把 request / completion / payload 在链路上传过去。</span><br><span class="line">NVMe：定义 SSD 如何接收命令、如何通过队列完成读写、如何返回完成信息。</span><br></pre></td></tr></table></figure>
+
+<p>在普通 PC 里，CPU 和操作系统驱动完成这些工作：</p>
+<ul>
+<li>PCIe 枚举，找到 SSD 设备和 BAR 空间。</li>
+<li>配置 NVMe 控制器寄存器。</li>
+<li>建立 Admin Queue 和 IO Queue。</li>
+<li>把 NVMe command 写入 Submission Queue。</li>
+<li>写 doorbell 通知 SSD 取命令。</li>
+<li>解析 Completion Queue Entry，回收命令资源。</li>
+</ul>
+<p>本项目把这些流程下沉到 FPGA 内部，用 RTL 完成主机侧控制逻辑。</p>
+<h2 id="FPGA-在系统中的角色"><a href="#FPGA-在系统中的角色" class="headerlink" title="FPGA 在系统中的角色"></a>FPGA 在系统中的角色</h2><p>从协议角色看，FPGA 在本项目中承担的是轻量级 Host Controller 的角色。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">FPGA Host</span><br><span class="line">    负责 PCIe/NVMe 初始化、队列管理、命令生成、PRP 地址管理、数据缓存</span><br><span class="line"></span><br><span class="line">NVMe SSD</span><br><span class="line">    负责执行命令，并通过 PCIe 主动读取命令、PRP、数据，写回 CQE 或读数据</span><br></pre></td></tr></table></figure>
+
+<p>当前工程里，FPGA 不是把所有 NVMe 特性都做完，而是实现一条可上板运行的基础读写路径：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">初始化完成</span><br><span class="line">-&gt; 建立 Admin Queue 和 IO Queue</span><br><span class="line">-&gt; AXI-Lite 触发 Read/Write 命令</span><br><span class="line">-&gt; SSD 读取 SQE / PRP / 数据</span><br><span class="line">-&gt; SSD 写回 Completion</span><br><span class="line">-&gt; FPGA 匹配 CID 并输出 done/status</span><br></pre></td></tr></table></figure>
+
+<p>这也是后续博客中应该坚持的项目边界：轻量级 NVMe Host Controller，而不是完整商用 NVMe 协议栈。</p>
+<h2 id="PCIe-TLP-四条通路"><a href="#PCIe-TLP-四条通路" class="headerlink" title="PCIe TLP 四条通路"></a>PCIe TLP 四条通路</h2><p>Xilinx PCIe IP 对用户逻辑暴露四条 AXI-Stream 通道：</p>
+<table>
+<thead>
+<tr>
+<th>通道</th>
+<th>全称</th>
+<th>从 FPGA 视角的方向</th>
+<th>本项目用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>RQ</td>
+<td>Requester Request</td>
+<td>FPGA 主动发请求</td>
+<td>枚举、初始化、doorbell、outbound write&#x2F;read</td>
+</tr>
+<tr>
+<td>RC</td>
+<td>Requester Completion</td>
+<td>对端返回 FPGA 请求的 completion</td>
+<td>配置空间和寄存器读取返回</td>
+</tr>
+<tr>
+<td>CQ</td>
+<td>Completer Request</td>
+<td>SSD 主动访问 FPGA 地址空间</td>
+<td>SSD 读 SQE、读 PRP、读数据、写 CQE</td>
+</tr>
+<tr>
+<td>CC</td>
+<td>Completer Completion</td>
+<td>FPGA 响应 SSD 的 non-posted request</td>
+<td>返回 SQE、PRP list、memory read data</td>
+</tr>
+</tbody></table>
+<p>这里需要先明确：运行时的 NVMe IO 并不是 FPGA 一直主动把数据推给 SSD，而是 SSD 根据队列和 PRP 地址主动访问 FPGA 暴露出来的地址窗口。</p>
+<p>写 16KB 数据到 SSD 的实际链路更接近：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">FPGA 写 doorbell</span><br><span class="line">-&gt; SSD 通过 CQ 读 IOSQ 中的 SQE</span><br><span class="line">-&gt; SSD 根据 SQE 中的 PRP 地址，通过 CQ 读 FPGA memory window 中的数据</span><br><span class="line">-&gt; FPGA 通过 CC 返回 CplD 数据</span><br><span class="line">-&gt; SSD 执行写入</span><br><span class="line">-&gt; SSD 通过 CQ 写 IOCQ completion</span><br></pre></td></tr></table></figure>
+
+<p>读 16KB 数据则是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">FPGA 写 doorbell</span><br><span class="line">-&gt; SSD 通过 CQ 读 IOSQ 中的 SQE</span><br><span class="line">-&gt; SSD 根据 SQE 中的 PRP 地址，把数据通过 CQ MemWr 写回 FPGA memory window</span><br><span class="line">-&gt; SSD 通过 CQ 写 IOCQ completion</span><br></pre></td></tr></table></figure>
+
+<h2 id="NVMe-Queue、Doorbell、CID-和-PRP"><a href="#NVMe-Queue、Doorbell、CID-和-PRP" class="headerlink" title="NVMe Queue、Doorbell、CID 和 PRP"></a>NVMe Queue、Doorbell、CID 和 PRP</h2><p>最小 NVMe 系统需要四类队列：</p>
+<table>
+<thead>
+<tr>
+<th>队列</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Admin Submission Queue, ASQ</td>
+<td>提交管理命令，例如 Identify、Create IO Queue</td>
+</tr>
+<tr>
+<td>Admin Completion Queue, ACQ</td>
+<td>接收管理命令完成信息</td>
+</tr>
+<tr>
+<td>IO Submission Queue, IOSQ</td>
+<td>提交读写命令</td>
+</tr>
+<tr>
+<td>IO Completion Queue, IOCQ</td>
+<td>接收读写命令完成信息</td>
+</tr>
+</tbody></table>
+<p>当前工程最终按下面方向组织：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">1 个 Admin Queue</span><br><span class="line">16 个 IO Submission Queue</span><br><span class="line">1 个总深度 1024 的 IO Completion Queue 逻辑</span><br></pre></td></tr></table></figure>
+
+<p>NVMe 队列本身位于主机内存地址空间。SSD 不会自动知道 FPGA 已经写入了新的 SQE，所以主机写完 SQE 后需要写 doorbell。</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">FPGA 更新 SQ tail</span><br><span class="line">-&gt; 通过 PCIe Memory Write 写 SSD BAR0 中的 doorbell register</span><br><span class="line">-&gt; SSD 得知某个队列有新命令</span><br><span class="line">-&gt; SSD 根据 ASQ/IOSQ 地址读取命令</span><br></pre></td></tr></table></figure>
+
+<p>CID 用来把发出去的命令和回来的 completion 对应起来。SSD 可能乱序完成不同命令，所以不能只按发送顺序判断哪条命令完成。当前 <code>command_ctl</code> 中围绕 CID 做了分配、记录、匹配、回收和错误统计。</p>
+<p>PRP 则是 NVMe 的物理页地址描述方式：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">PRP1：第一个数据页地址</span><br><span class="line">PRP2：第二个数据页地址，或 PRP List 地址</span><br><span class="line">PRP List：当数据跨越更多 page 时，保存后续 page 地址列表</span><br></pre></td></tr></table></figure>
+
+<p>当前 16KB 测试对应 4 个 4KB page。<code>prp_ctl</code> 不预先把完整 PRP list 写入外部 DDR，而是在 FPGA 内部维护 CID 到 page 信息的上下文。当 SSD 发起 PRP list read 时，由 <code>prp_ctl</code> 根据地址和 CID 返回对应 PRP entry。</p>
+<h2 id="当前地址窗口"><a href="#当前地址窗口" class="headerlink" title="当前地址窗口"></a>当前地址窗口</h2><p>当前默认规划可以概括为：</p>
+<table>
+<thead>
+<tr>
+<th>地址窗口</th>
+<th>默认地址</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>BAR0</td>
+<td><code>0x1000_0000</code></td>
+<td>SSD 控制寄存器和 doorbell 基地址</td>
+</tr>
+<tr>
+<td>ASQ</td>
+<td><code>0x2000_0000</code></td>
+<td>Admin Submission Queue</td>
+</tr>
+<tr>
+<td>ACQ</td>
+<td><code>0x2000_1000</code></td>
+<td>Admin Completion Queue</td>
+</tr>
+<tr>
+<td>IOSQ</td>
+<td><code>0x2000_2000</code></td>
+<td>IO Submission Queue 区域</td>
+</tr>
+<tr>
+<td>IOCQ</td>
+<td><code>0x2001_2000</code></td>
+<td>IO Completion Queue 区域</td>
+</tr>
+<tr>
+<td>Memory Window</td>
+<td><code>0x3000_2000</code></td>
+<td>FPGA 数据缓存窗口，当前 size 为 64KB</td>
+</tr>
+<tr>
+<td>PRP List Window</td>
+<td><code>0x9000_0000</code></td>
+<td>虚拟 PRP list 地址窗口</td>
+</tr>
+</tbody></table>
+<p>这些地址需要在初始化、CQ route、PRP、memory controller 中保持一致。如果某个模块里的地址常量没有同步更新，SSD 发出的 MemRd&#x2F;MemWr 可能会打到错误窗口，表现为命令卡住、CQE 不回来或数据校验失败。</p>
+<h2 id="Xilinx-PCIe-IP-手册学习"><a href="#Xilinx-PCIe-IP-手册学习" class="headerlink" title="Xilinx PCIe IP 手册学习"></a>Xilinx PCIe IP 手册学习</h2><p>当前使用的是 Xilinx UltraScale PCIe Integrated Block，主要参考 PG156。这个 IP 的用户侧接口可以分成三类：时钟和复位接口、Configuration &#x2F; Management 相关接口、PCIe Transaction 相关 AXI-Stream 接口。</p>
+<p><img src="/images/nvme-host/2b-ip-interfaces.png" alt="Xilinx PCIe IP 接口分类"></p>
+<p>时钟侧需要外部 PCIe 参考时钟，当前工程按 100 MHz 参考时钟处理；用户逻辑侧使用 IP 输出的 <code>user_clk</code>，当前配置为 125 MHz。</p>
+<p><img src="/images/nvme-host/2b-clock-interface.png" alt="PCIe IP 时钟接口"></p>
+<p>CFG 相关接口用于读取或控制 PCIe IP 自身状态，例如配置空间、协商出的 MPS&#x2F;MRRS、链路状态、流控信息等。它不是 SSD 数据读写的主路径。</p>
+<p><img src="/images/nvme-host/2b-cfg-interface.png" alt="PCIe IP CFG 接口"></p>
+<p>真正和 TLP 数据收发有关的是 RQ、RC、CQ、CC 四条 AXI-Stream 通路。</p>
+<p><img src="/images/nvme-host/2b-tlp-interface.png" alt="PCIe IP TLP 接口"></p>
+<p>KU060 板卡上有多个 PCIe hard block 位置，当前工程使用的是与板卡走线匹配的位置。之前上板调试时，PCIe block location 选择不一致会导致 link 训练失败，所以这部分要和板卡约束一起确认。</p>
+<p><img src="/images/nvme-host/2b-ku060-pcie-location.png" alt="KU060 PCIe 位置"></p>
+<h2 id="NVMe-初始化相关记录"><a href="#NVMe-初始化相关记录" class="headerlink" title="NVMe 初始化相关记录"></a>NVMe 初始化相关记录</h2><p>当前学习和实现主要参考 NVMe 1.3d。对当前项目来说，关键不是版本号本身，而是理解下面几类内容：</p>
+<ul>
+<li>Controller Register：CAP、VS、CC、CSTS、AQA、ASQ、ACQ、doorbell。</li>
+<li>Admin Command：Identify、Create IO CQ、Create IO SQ。</li>
+<li>IO Command：Read、Write。</li>
+<li>Queue Entry：SQE &#x2F; CQE 格式。</li>
+<li>PRP：数据页地址描述。</li>
+</ul>
+<p>队列空满判断不能只看地址是否相等，还要结合 head、tail、phase bit 等上下文。</p>
+<p><img src="/images/nvme-host/2b-queue-empty-full.png" alt="NVMe 队列空满判断"></p>
+<p>NVMe PRP 地址和 page 关系很紧密。当前项目里以 4KB page 为基本粒度组织数据窗口和 PRP list。</p>
+<p><img src="/images/nvme-host/2b-4kb-align.png" alt="4KB 对齐相关记录"></p>
+<p>NVMe SQE 是 64B，里面包含 opcode、CID、NSID、PRP1、PRP2、SLBA、NLB 等字段。当前工程的 <code>command_construct</code> 就是把上游读写参数拼成对应 SQE。</p>
+<p><img src="/images/nvme-host/2b-nvme-command-1.png" alt="NVMe 命令格式 1"></p>
+<p><img src="/images/nvme-host/2b-nvme-command-2.png" alt="NVMe 命令格式 2"></p>
+<p>初始化阶段最基础的一组寄存器访问如下。实际工程中的地址和队列深度以当前地址规划为准。</p>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>寄存器</th>
+<th>偏移地址</th>
+<th>写入值示例</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td>CC</td>
+<td><code>0x14</code></td>
+<td><code>0x00000000</code></td>
+<td>关闭控制器，保证 AQA&#x2F;ASQ&#x2F;ACQ 可重新配置</td>
+</tr>
+<tr>
+<td>2</td>
+<td>AQA</td>
+<td><code>0x24</code></td>
+<td>由队列深度决定</td>
+<td>Admin Queue 深度字段是 0-based</td>
+</tr>
+<tr>
+<td>3</td>
+<td>ASQ_L</td>
+<td><code>0x28</code></td>
+<td>ASQ 低 32 位地址</td>
+<td>指向 FPGA 暴露给 SSD 的 ASQ 地址</td>
+</tr>
+<tr>
+<td>4</td>
+<td>ASQ_H</td>
+<td><code>0x2C</code></td>
+<td>ASQ 高 32 位地址</td>
+<td>当前地址在 32 位内时为 0</td>
+</tr>
+<tr>
+<td>5</td>
+<td>ACQ_L</td>
+<td><code>0x30</code></td>
+<td>ACQ 低 32 位地址</td>
+<td>指向 FPGA 暴露给 SSD 的 ACQ 地址</td>
+</tr>
+<tr>
+<td>6</td>
+<td>ACQ_H</td>
+<td><code>0x34</code></td>
+<td>ACQ 高 32 位地址</td>
+<td>当前地址在 32 位内时为 0</td>
+</tr>
+<tr>
+<td>7</td>
+<td>CC</td>
+<td><code>0x14</code></td>
+<td>由 MPS、IOSQES、IOCQES 等字段决定</td>
+<td>使能 NVMe 控制器</td>
+</tr>
+<tr>
+<td>8</td>
+<td>CSTS</td>
+<td><code>0x1C</code></td>
+<td>只读</td>
+<td>轮询 <code>CSTS.RDY</code>，等待控制器 ready</td>
+</tr>
+</tbody></table>
+<h2 id="Xilinx-IP-配置要点"><a href="#Xilinx-IP-配置要点" class="headerlink" title="Xilinx IP 配置要点"></a>Xilinx IP 配置要点</h2><p>当前 PCIe IP 的一些端口和侧边带接口可以按下面方式理解。</p>
+<p><img src="/images/nvme-host/2c-port-list.png" alt="PCIe IP 端口列表"></p>
+<h3 id="时钟、复位和链路状态"><a href="#时钟、复位和链路状态" class="headerlink" title="时钟、复位和链路状态"></a>时钟、复位和链路状态</h3><p>板载 PCIe 100 MHz 差分参考时钟进入 <code>IBUFDS_GTE4</code>，PCIe IP 输出的 <code>user_clk</code> 作为用户逻辑主时钟，当前为 125 MHz。用户逻辑复位跟随 <code>user_reset</code>，枚举、初始化和 IO 测试都应等待 <code>user_lnk_up</code> 为 1 后再启动。</p>
+<p><img src="/images/nvme-host/2c-clock.png" alt="PCIe 时钟配置"></p>
+<h3 id="cfg-mgmt"><a href="#cfg-mgmt" class="headerlink" title="cfg_mgmt"></a>cfg_mgmt</h3><p><code>cfg_mgmt</code> 在当前工程中主要由 Alex Forencich 的 PCIe 封装模块使用，用于读取 PCIe IP 内部协商出来的 Max Payload Size、Max Read Request Size 等参数。它不是发往 SSD 的配置 TLP 通路。</p>
+<p><img src="/images/nvme-host/2c-cfg-mgmt.png" alt="cfg_mgmt 接口"></p>
+<h3 id="cfg-interrupt"><a href="#cfg-interrupt" class="headerlink" title="cfg_interrupt"></a>cfg_interrupt</h3><p>当前工程不使用 Root Port IP 主动发送传统中断，输入固定为 0：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_interrupt_int</span>       (<span class="number">4&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_interrupt_pending</span>   (<span class="number">4&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_interrupt_sent</span>      ()</span><br></pre></td></tr></table></figure>
+
+<p><img src="/images/nvme-host/2c-cfg-interrupt.png" alt="cfg_interrupt 接口"></p>
+<h3 id="cfg-control"><a href="#cfg-control" class="headerlink" title="cfg_control"></a>cfg_control</h3><p>当前工程中重点确认：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.cfg_config_space_enable</span>     (<span class="number">1&#x27;b1</span>),</span><br><span class="line"><span class="variable">.cfg_link_training_enable</span>    (<span class="number">1&#x27;b1</span>),</span><br><span class="line"><span class="variable">.cfg_hot_reset_in</span>            (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_dsn</span>                     (<span class="number">64&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_ds_bus_number</span>           (<span class="number">8&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_ds_device_number</span>        (<span class="number">5&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_ds_function_number</span>      (<span class="number">3&#x27;d0</span>),</span><br><span class="line"><span class="variable">.cfg_subsys_vend_id</span>          (<span class="number">16&#x27;h10EE</span>),</span><br><span class="line"><span class="variable">.cfg_power_state_change_ack</span>  (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_err_cor_in</span>              (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.cfg_err_uncor_in</span>            (<span class="number">1&#x27;b0</span>)</span><br></pre></td></tr></table></figure>
+
+<p><img src="/images/nvme-host/2c-cfg-control.png" alt="cfg_control 接口"></p>
+<h3 id="cfg-fc-和-transmit-fc"><a href="#cfg-fc-和-transmit-fc" class="headerlink" title="cfg_fc 和 transmit_fc"></a>cfg_fc 和 transmit_fc</h3><p><code>cfg_fc_*</code> 应连接到 PCIe 封装层，用户逻辑继续遵守 AXI-Stream ready&#x2F;valid。实际调试 RQ 卡顿时，先看 <code>s_axis_rq_tvalid/tready</code>，再结合 credit 信号判断原因。</p>
+<p><img src="/images/nvme-host/2c-cfg-fc.png" alt="cfg_fc 接口"></p>
+<p><code>pcie_tfc_*</code> 更偏本地发送 buffer 余量。当前主逻辑仍以 AXI-Stream <code>tready</code> 为准，性能调试时再考虑接到 ILA 或 Alex 封装的可选端口。</p>
+<p><img src="/images/nvme-host/2c-transmit-fc.png" alt="transmit_fc 接口"></p>
+<h3 id="message-和-shared-logic"><a href="#message-和-shared-logic" class="headerlink" title="message 和 shared logic"></a>message 和 shared logic</h3><p>当前项目不通过 <code>cfg_msg_transmit_*</code> 主动发送 PCIe Message，也不处理 <code>cfg_msg_received_*</code> sideband message。当前只使用一个 PCIe Root Port IP，不共享底层 GT&#x2F;PLL 资源，因此 shared logic 相关输出也不接入用户逻辑。</p>
+<p><img src="/images/nvme-host/2c-msg-tx.png" alt="msg transmit 接口"></p>
+<p><img src="/images/nvme-host/2c-msg-rx.png" alt="msg received 接口"></p>
+<p><img src="/images/nvme-host/2c-shared-logic.png" alt="shared logic 接口"></p>
+<h2 id="设计注意事项"><a href="#设计注意事项" class="headerlink" title="设计注意事项"></a>设计注意事项</h2><p>这部分是当前工程里最容易在上板时暴露问题的设计点。</p>
+<h3 id="时钟和复位边界"><a href="#时钟和复位边界" class="headerlink" title="时钟和复位边界"></a>时钟和复位边界</h3><p><code>sys_clk</code> &#x2F; <code>sys_clk_gt</code> 来自板卡 PCIe 参考时钟路径；<code>user_clk</code> 是 PCIe IP 输出给用户逻辑的 AXI-Stream 时钟。RQ&#x2F;RC&#x2F;CQ&#x2F;CC、NVMe 初始化、command、queue、PRP、memory 等主逻辑默认都放在 <code>user_clk</code> 域。用户逻辑复位跟随 <code>user_reset</code>，内部可转换成 <code>user_rst_n</code>。</p>
+<h3 id="Root-Port-和-Endpoint-角色"><a href="#Root-Port-和-Endpoint-角色" class="headerlink" title="Root Port 和 Endpoint 角色"></a>Root Port 和 Endpoint 角色</h3><p>当前 FPGA 是 Root Port，SSD 是 Endpoint。Xilinx IP 配置页里的 PF0 BAR 是 FPGA 这个 PCIe 端口自己的 BAR；NVMe 初始化里真正要访问的是 SSD 配置空间里的 BAR0。SSD BAR0 分配完成后，FPGA 才能通过 <code>SSD_BAR0_BASE + offset</code> 访问 CAP、CC、CSTS、AQA、ASQ、ACQ、doorbell 等寄存器。</p>
+<h3 id="MPS-MRRS-和数据分包"><a href="#MPS-MRRS-和数据分包" class="headerlink" title="MPS &#x2F; MRRS 和数据分包"></a>MPS &#x2F; MRRS 和数据分包</h3><p>PCIe IP 配置页里填写的是能力上限，实际运行时还要看链路协商和配置后的 MPS&#x2F;MRRS。上板时如果实际 MPS 是 128B，completion data 和 Memory Write payload 就要按这个边界切分。</p>
+<p>当前用户侧 AXI-Stream 是 256-bit，一拍 32B。为了效率，数据 payload 不应长期只发 32B 小包；但每个 TLP 也不能超过实际 MPS。更合理的做法是按 MPS 聚合，例如 128B 对应 4 拍 256-bit 数据。</p>
+<h3 id="AXI-Stream-计数跟随-fire"><a href="#AXI-Stream-计数跟随-fire" class="headerlink" title="AXI-Stream 计数跟随 fire"></a>AXI-Stream 计数跟随 fire</h3><p>RQ、RC、CQ、CC 都是 ready&#x2F;valid 协议。内部状态机推进、地址递增、payload beat 计数、last 生成，都应跟随：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">fire = valid &amp;&amp; ready;</span><br></pre></td></tr></table></figure>
+
+<p>上板时 <code>ready</code> 被 PCIe IP 拉低是正常现象，如果状态机在 <code>ready=0</code> 时继续修改 header&#x2F;data，很容易出现最后一拍错位、length 不一致或 completion 内容重复。</p>
+<h3 id="Queue、Doorbell-和-PRP"><a href="#Queue、Doorbell-和-PRP" class="headerlink" title="Queue、Doorbell 和 PRP"></a>Queue、Doorbell 和 PRP</h3><p>NVMe 命令提交流程里，doorbell 不能早于 SQE 写入：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">构造 SQE</span><br><span class="line">-&gt; 写入 ASQ/IOSQ</span><br><span class="line">-&gt; 更新 SQ tail</span><br><span class="line">-&gt; 写 doorbell</span><br><span class="line">-&gt; SSD 再根据队列地址读取 SQE</span><br></pre></td></tr></table></figure>
+
+<p>如果做 doorbell 聚合，需要保证聚合只影响通知频率，不改变队列里 SQE 已经可读这个事实。CQ 侧还要注意 phase bit，head wrap 时 phase 翻转需要用寄存器保存，不能只靠单拍组合判断。</p>
+<p>当前 PRP 设计适合连续地址和固定 memory window 的读写测试。后续如果要支持随机物理页、复杂 scatter-gather 或不同 namespace 的大规模并发，需要把 PRP list 做成真正可缓存、可索引、可回收的 RAM 表。</p>
+<h3 id="CID-生命周期"><a href="#CID-生命周期" class="headerlink" title="CID 生命周期"></a>CID 生命周期</h3><p>CID 不能只作为一个递增计数器使用。当前 command 模块需要记录：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">CID -&gt; queue_id / command_type / opcode / state / issue_time / context</span><br></pre></td></tr></table></figure>
+
+<p>completion 回来后，要根据 CID 和 SQID 做匹配。匹配成功再回收 CID；出现 mismatch、timeout、disabled queue、drop 等情况时，应记录错误计数和上下文，避免问题只表现成“命令没有 done”。</p>
+<h3 id="当前边界"><a href="#当前边界" class="headerlink" title="当前边界"></a>当前边界</h3><p>当前版本更适合作为轻量级 NVMe Host Controller 原型：</p>
+<ul>
+<li>支持固定地址窗口下的 Admin Queue、IO Queue 和 16KB 读写闭环。</li>
+<li>支持基础多队列结构、CID 匹配、PRP list 响应和状态统计。</li>
+<li>不把 MSI-X、完整 PRP RAM、完整错误恢复、复杂电源管理作为当前主线。</li>
+</ul>
+<p>这个边界在写博客和准备面试时也要讲清楚。项目的亮点是从 PCIe TLP 到 NVMe 队列的数据闭环，而不是声称已经实现完整商用 SSD 驱动。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/" data-id="cmpdoqaka0001uki7gzm23f2h" data-title="FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Xilinx/" rel="tag">Xilinx</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+  
+    <a href="/2026/05/20/fpga-nvme-host-01-background/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">后一篇</strong>
+      <div class="article-nav-title">FPGA NVMe Host 项目记录（一）：背景与目标</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">分类</h3>
+    <div class="widget">
+      <ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/">FPGA</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/PCIe/">PCIe</a></li></ul></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Xilinx/" rel="tag">Xilinx</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签云</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 10px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">归档</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/05/">五月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/01/">一月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/09/">九月 2025</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">最新文章</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/">FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-01-background/">FPGA NVMe Host 项目记录（一）：背景与目标</a>
+          </li>
+        
+          <li>
+            <a href="/2026/01/20/board-debugging/">上板调试</a>
+          </li>
+        
+          <li>
+            <a href="/2025/09/11/hello-world/">Hello World</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      
+      &copy; 2026 LI HUALOU<br>
+      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+
+<script src="/js/jquery-3.6.4.min.js"></script>
+
+
+
+  
+<script src="/fancybox/jquery.fancybox.min.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+
+  </div>
+</body>
+</html>

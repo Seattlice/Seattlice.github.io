@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+  
+  <title>FPGA NVMe Host 项目记录（一）：背景与目标 | LI HUALOU</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。 我这里主要做的事情是：把 Xilinx PCIe Gen3 I">
+<meta property="og:type" content="article">
+<meta property="og:title" content="FPGA NVMe Host 项目记录（一）：背景与目标">
+<meta property="og:url" content="https://seattlice.github.io/2026/05/20/fpga-nvme-host-01-background/index.html">
+<meta property="og:site_name" content="LI HUALOU">
+<meta property="og:description" content="项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。 我这里主要做的事情是：把 Xilinx PCIe Gen3 I">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/project-closed-loop.svg">
+<meta property="article:published_time" content="2026-05-20T06:40:00.000Z">
+<meta property="article:modified_time" content="2026-05-20T06:40:00.000Z">
+<meta property="article:author" content="LI HUALOU">
+<meta property="article:tag" content="NVMe">
+<meta property="article:tag" content="PCIe">
+<meta property="article:tag" content="FPGA">
+<meta property="article:tag" content="RTL">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://seattlice.github.io/images/nvme-host/project-closed-loop.svg">
+  
+    <link rel="alternate" href="/atom.xml" title="LI HUALOU" type="application/atom+xml">
+  
+  
+    <link rel="shortcut icon" href="/favicon.png">
+  
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+    
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+
+  
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fork-awesome@1.2.0/css/fork-awesome.min.css">
+
+<meta name="generator" content="Hexo 7.3.0"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">LI HUALOU</a>
+      </h1>
+      
+        <h2 id="subtitle-wrap">
+          <a href="/" id="subtitle">HUALOU</a>
+        </h2>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+        
+          <a class="nav-icon" href="/atom.xml" title="RSS 订阅"><span class="fa fa-rss"></span></a>
+        
+        <a class="nav-icon nav-search-btn" title="搜索"><span class="fa fa-search"></span></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="搜索"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="https://seattlice.github.io"></form>
+      </div>
+    </div>
+  </div>
+</header>
+
+      <div class="outer">
+        <section id="main"><article id="post-fpga-nvme-host-01-background" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/20/fpga-nvme-host-01-background/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T06:40:00.000Z" itemprop="datePublished">2026-05-20</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="p-name article-title" itemprop="headline name">
+      FPGA NVMe Host 项目记录（一）：背景与目标
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <p><img src="/images/nvme-host/project-closed-loop.svg" alt="FPGA NVMe Host Controller 项目闭环"></p>
+<h2 id="项目目标"><a href="#项目目标" class="headerlink" title="项目目标"></a>项目目标</h2><p>这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。</p>
+<p>我这里主要做的事情是：把 Xilinx PCIe Gen3 IP 输出的 AXI-Stream 数据流解析成 TLP header 和 payload，再按照地址、TLP 类型和方向路由到 NVMe 初始化、队列、PRP、数据缓存等模块。不同模块处理完成后，再通过 RQ&#x2F;CC 等通路返回对应的 TLP，或者更新 FPGA 内部的 memory window，从而完成 FPGA 与 SSD 之间的数据交互。</p>
+<p>当前系统围绕一个基本闭环展开：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">FPGA 完成 PCIe 链路建立和 NVMe 初始化</span><br><span class="line">-&gt; 建立 Admin Queue 和 IO Queue</span><br><span class="line">-&gt; 外部通过 AXI-Lite 触发 NVMe Read/Write 命令</span><br><span class="line">-&gt; SSD 通过 PCIe 主动读取 SQE / PRP / 数据，或写回数据和 CQE</span><br><span class="line">-&gt; FPGA 匹配 Completion，回收 CID，输出 done/status</span><br></pre></td></tr></table></figure>
+
+<h2 id="项目背景"><a href="#项目背景" class="headerlink" title="项目背景"></a>项目背景</h2><p>在普通 PC 系统中，NVMe SSD 由 CPU、操作系统和驱动共同管理。PCIe 枚举、NVMe 初始化、队列建立、PRP 地址管理、命令提交和 completion 回收都由软件栈完成。</p>
+<p>对于数据采集、实时缓存和硬件加速这类场景，如果每次 IO 都依赖 CPU 参与，会带来软件调度开销，也会增加系统时延的不确定性。这个项目尝试把 SSD 控制链路的一部分下沉到 FPGA 内部，让 FPGA 作为 PCIe Host&#x2F;Root 侧逻辑直接控制 NVMe SSD。</p>
+<p>项目里 FPGA 负责：</p>
+<ul>
+<li>建立 PCIe 链路，并完成 SSD 枚举。</li>
+<li>配置 NVMe 控制器寄存器。</li>
+<li>建立 Admin Queue 和 IO Queue。</li>
+<li>维护 command、queue、PRP 和 memory window。</li>
+<li>通过 AXI-Lite 暴露控制寄存器，通过 AXI4 暴露数据缓存窗口。</li>
+</ul>
+<p>这样做的直接意义是：外部采集或计算模块可以先把数据写入 FPGA 侧 AXI4 memory window，再由 FPGA 触发 NVMe Write 写入 SSD；读数据时也可以由 FPGA 触发 NVMe Read，把 SSD 数据读回 AXI4 memory window。对于图像数据、雷达原始数据等连续大带宽数据流，这种结构可以减少 CPU 参与，为后续长时间记录和回放打基础。</p>
+<h2 id="调试接口"><a href="#调试接口" class="headerlink" title="调试接口"></a>调试接口</h2><p>当前工程中几个调试接口的定位如下：</p>
+<ul>
+<li><code>AXI-Lite</code>：配置寄存器、选择命令来源、触发读写命令、读取状态和错误信息。</li>
+<li><code>AXI4</code>：访问 FPGA 侧数据缓存窗口，测试时由 <code>ssd_rw_test_ctrl</code> 写入或读出 16KB 数据。</li>
+<li><code>VIO</code>：板级调试阶段手动控制测试开始，例如 <code>rw_write_start</code>、<code>rw_write_start_command</code>、<code>rw_read_start_command</code>、<code>rw_read_start</code>。</li>
+<li><code>ILA</code>：观察 PCIe TLP、PRP、CQ route、completion、done pulse 等关键路径。</li>
+</ul>
+<h2 id="核心模块"><a href="#核心模块" class="headerlink" title="核心模块"></a>核心模块</h2><p>当前工程中，SSD 控制器不是一个大状态机，而是拆成几条相对清晰的数据面：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">pcie_us</span><br><span class="line">    Xilinx PCIe IP + AXI-Stream RQ/RC/CQ/CC 适配</span><br><span class="line"></span><br><span class="line">SSD_ctl</span><br><span class="line">    主 NVMe host control 顶层</span><br><span class="line"></span><br><span class="line">axi_lite_ctl</span><br><span class="line">    AXI-Lite 寄存器、命令来源选择、状态回读</span><br><span class="line"></span><br><span class="line">prp_ctl</span><br><span class="line">    PRP1/PRP2 计算、PRP list 上下文维护、PRP list CplD 返回</span><br><span class="line"></span><br><span class="line">command_ctl</span><br><span class="line">    CID 池、命令构造、command_record、completion 匹配、错误/超时统计</span><br><span class="line"></span><br><span class="line">nvme_queue_ctl</span><br><span class="line">    ASQ/ACQ/IOSQ/IOCQ 队列逻辑、doorbell、CQE 接收、队列调度</span><br><span class="line"></span><br><span class="line">pcie_memory_clt_top</span><br><span class="line">    外侧 AXI 写入与读出、SSD 数据写入与读出、AXI 与 TLP 转接桥</span><br><span class="line"></span><br><span class="line">SSD_pcie_us</span><br><span class="line">    RQ round-robin + CQ route + CC round-robin</span><br></pre></td></tr></table></figure>
+
+<p>这种拆分方便逐个模块验证。command、queue、PRP、memory 和 PCIe TLP route 可以先做单模块仿真，再逐步接成小闭环和完整闭环。</p>
+<h2 id="当前实现范围"><a href="#当前实现范围" class="headerlink" title="当前实现范围"></a>当前实现范围</h2><p>当前已经实现和验证过的内容包括：</p>
+<ul>
+<li>PCIe 链路与 NVMe 初始化流程。</li>
+<li>Admin Queue 和 IO Queue 建立。</li>
+<li>NVMe Read&#x2F;Write 命令下发。</li>
+<li>PRP1&#x2F;PRP2 和 PRP List 生成。</li>
+<li>SSD 对 SQE、PRP List、data buffer 的 PCIe 访问响应。</li>
+<li>Completion 回收和 CID 匹配。</li>
+<li>AXI-Lite 控制寄存器和 AXI4 数据缓存接口。</li>
+</ul>
+<p>当前还没有把所有企业级 NVMe 特性都做完整，后续可以继续扩展：</p>
+<ul>
+<li>更完整的 OS 级物理页管理。</li>
+<li>MSI-X 中断接收和中断路由。</li>
+<li>更细粒度的 PCIe credit-aware 调度。</li>
+<li>AER、Abort、SGL、metadata、namespace 管理等高级 NVMe 特性。</li>
+</ul>
+<p>这篇项目总结后续会围绕“能上板跑通的轻量级 NVMe Host Controller”来展开，不把它描述成完整商用 NVMe 协议栈。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/20/fpga-nvme-host-01-background/" data-id="cmpdoqak80000uki75uc65n1b" data-title="FPGA NVMe Host 项目记录（一）：背景与目标" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">前一篇</strong>
+      <div class="article-nav-title">
+        
+          FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2026/01/20/board-debugging/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">后一篇</strong>
+      <div class="article-nav-title">上板调试</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">分类</h3>
+    <div class="widget">
+      <ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/">FPGA</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/PCIe/">PCIe</a></li></ul></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Xilinx/" rel="tag">Xilinx</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签云</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 10px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">归档</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/05/">五月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/01/">一月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/09/">九月 2025</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">最新文章</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/">FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-01-background/">FPGA NVMe Host 项目记录（一）：背景与目标</a>
+          </li>
+        
+          <li>
+            <a href="/2026/01/20/board-debugging/">上板调试</a>
+          </li>
+        
+          <li>
+            <a href="/2025/09/11/hello-world/">Hello World</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      
+      &copy; 2026 LI HUALOU<br>
+      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+
+<script src="/js/jquery-3.6.4.min.js"></script>
+
+
+
+  
+<script src="/fancybox/jquery.fancybox.min.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+
+  </div>
+</body>
+</html>
