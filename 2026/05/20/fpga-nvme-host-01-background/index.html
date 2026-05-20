@@ -6,12 +6,12 @@
   
   <title>FPGA NVMe Host 项目记录（一）：背景与目标 | LI HUALOU</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <meta name="description" content="项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。 我这里主要做的事情是：把 Xilinx PCIe Gen3 I">
+  <meta name="description" content="这一篇先记录项目背景、目标和当前工程边界。后面的章节会继续展开 PCIe&#x2F;NVMe 基础、系统架构、Command、Queue、PRP、AXI 数据缓存和上板验证。  目录 项目目标 项目背景 调试接口 核心模块 当前实现范围  项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只">
 <meta property="og:type" content="article">
 <meta property="og:title" content="FPGA NVMe Host 项目记录（一）：背景与目标">
 <meta property="og:url" content="https://seattlice.github.io/2026/05/20/fpga-nvme-host-01-background/index.html">
 <meta property="og:site_name" content="LI HUALOU">
-<meta property="og:description" content="项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。 我这里主要做的事情是：把 Xilinx PCIe Gen3 I">
+<meta property="og:description" content="这一篇先记录项目背景、目标和当前工程边界。后面的章节会继续展开 PCIe&#x2F;NVMe 基础、系统架构、Command、Queue、PRP、AXI 数据缓存和上板验证。  目录 项目目标 项目背景 调试接口 核心模块 当前实现范围  项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/project-closed-loop.svg">
 <meta property="article:published_time" content="2026-05-20T06:40:00.000Z">
@@ -109,7 +109,15 @@
     
     <div class="e-content article-entry" itemprop="articleBody">
       
-        <p><img src="/images/nvme-host/project-closed-loop.svg" alt="FPGA NVMe Host Controller 项目闭环"></p>
+        <p>这一篇先记录项目背景、目标和当前工程边界。后面的章节会继续展开 PCIe&#x2F;NVMe 基础、系统架构、Command、Queue、PRP、AXI 数据缓存和上板验证。</p>
+<p><img src="/images/nvme-host/project-closed-loop.svg" alt="FPGA NVMe Host Controller 项目闭环"></p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#%E9%A1%B9%E7%9B%AE%E7%9B%AE%E6%A0%87">项目目标</a></li>
+<li><a href="#%E9%A1%B9%E7%9B%AE%E8%83%8C%E6%99%AF">项目背景</a></li>
+<li><a href="#%E8%B0%83%E8%AF%95%E6%8E%A5%E5%8F%A3">调试接口</a></li>
+<li><a href="#%E6%A0%B8%E5%BF%83%E6%A8%A1%E5%9D%97">核心模块</a></li>
+<li><a href="#%E5%BD%93%E5%89%8D%E5%AE%9E%E7%8E%B0%E8%8C%83%E5%9B%B4">当前实现范围</a></li>
+</ul>
 <h2 id="项目目标"><a href="#项目目标" class="headerlink" title="项目目标"></a>项目目标</h2><p>这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。</p>
 <p>我这里主要做的事情是：把 Xilinx PCIe Gen3 IP 输出的 AXI-Stream 数据流解析成 TLP header 和 payload，再按照地址、TLP 类型和方向路由到 NVMe 初始化、队列、PRP、数据缓存等模块。不同模块处理完成后，再通过 RQ&#x2F;CC 等通路返回对应的 TLP，或者更新 FPGA 内部的 memory window，从而完成 FPGA 与 SSD 之间的数据交互。</p>
 <p>当前系统围绕一个基本闭环展开：</p>
