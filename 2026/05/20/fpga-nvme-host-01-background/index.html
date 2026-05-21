@@ -6,12 +6,12 @@
   
   <title>FPGA NVMe Host 项目记录（一）：背景与目标 | LI HUALOU</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <meta name="description" content="这一篇先记录项目背景、目标和当前工程边界。后面的章节会继续展开 PCIe&#x2F;NVMe 基础、系统架构、Command、Queue、PRP、AXI 数据缓存和上板验证。  目录 项目目标 项目背景 调试接口 核心模块 当前实现范围  项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只">
+  <meta name="description" content="目录 1.1 项目目标 1.2 项目背景 1.3 当前已经形成的核心模块 1.4 当前实现范围  1.1 项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL">
 <meta property="og:type" content="article">
 <meta property="og:title" content="FPGA NVMe Host 项目记录（一）：背景与目标">
 <meta property="og:url" content="https://seattlice.github.io/2026/05/20/fpga-nvme-host-01-background/index.html">
 <meta property="og:site_name" content="LI HUALOU">
-<meta property="og:description" content="这一篇先记录项目背景、目标和当前工程边界。后面的章节会继续展开 PCIe&#x2F;NVMe 基础、系统架构、Command、Queue、PRP、AXI 数据缓存和上板验证。  目录 项目目标 项目背景 调试接口 核心模块 当前实现范围  项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只">
+<meta property="og:description" content="目录 1.1 项目目标 1.2 项目背景 1.3 当前已经形成的核心模块 1.4 当前实现范围  1.1 项目目标这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:image" content="https://seattlice.github.io/images/nvme-host/project-closed-loop.svg">
 <meta property="article:published_time" content="2026-05-20T06:40:00.000Z">
@@ -109,21 +109,19 @@
     
     <div class="e-content article-entry" itemprop="articleBody">
       
-        <p>这一篇先记录项目背景、目标和当前工程边界。后面的章节会继续展开 PCIe&#x2F;NVMe 基础、系统架构、Command、Queue、PRP、AXI 数据缓存和上板验证。</p>
-<p><img src="/images/nvme-host/project-closed-loop.svg" alt="FPGA NVMe Host Controller 项目闭环"></p>
+        <p><img src="/images/nvme-host/project-closed-loop.svg" alt="图 1-1 FPGA NVMe Host Controller 项目闭环"></p>
 <h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
-<li><a href="#%E9%A1%B9%E7%9B%AE%E7%9B%AE%E6%A0%87">项目目标</a></li>
-<li><a href="#%E9%A1%B9%E7%9B%AE%E8%83%8C%E6%99%AF">项目背景</a></li>
-<li><a href="#%E8%B0%83%E8%AF%95%E6%8E%A5%E5%8F%A3">调试接口</a></li>
-<li><a href="#%E6%A0%B8%E5%BF%83%E6%A8%A1%E5%9D%97">核心模块</a></li>
-<li><a href="#%E5%BD%93%E5%89%8D%E5%AE%9E%E7%8E%B0%E8%8C%83%E5%9B%B4">当前实现范围</a></li>
+<li><a href="#1-1-%E9%A1%B9%E7%9B%AE%E7%9B%AE%E6%A0%87">1.1 项目目标</a></li>
+<li><a href="#1-2-%E9%A1%B9%E7%9B%AE%E8%83%8C%E6%99%AF">1.2 项目背景</a></li>
+<li><a href="#1-3-%E5%BD%93%E5%89%8D%E5%B7%B2%E7%BB%8F%E5%BD%A2%E6%88%90%E7%9A%84%E6%A0%B8%E5%BF%83%E6%A8%A1%E5%9D%97">1.3 当前已经形成的核心模块</a></li>
+<li><a href="#1-4-%E5%BD%93%E5%89%8D%E5%AE%9E%E7%8E%B0%E8%8C%83%E5%9B%B4">1.4 当前实现范围</a></li>
 </ul>
-<h2 id="项目目标"><a href="#项目目标" class="headerlink" title="项目目标"></a>项目目标</h2><p>这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。</p>
+<h2 id="1-1-项目目标"><a href="#1-1-项目目标" class="headerlink" title="1.1 项目目标"></a>1.1 项目目标</h2><p>这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。</p>
 <p>我这里主要做的事情是：把 Xilinx PCIe Gen3 IP 输出的 AXI-Stream 数据流解析成 TLP header 和 payload，再按照地址、TLP 类型和方向路由到 NVMe 初始化、队列、PRP、数据缓存等模块。不同模块处理完成后，再通过 RQ&#x2F;CC 等通路返回对应的 TLP，或者更新 FPGA 内部的 memory window，从而完成 FPGA 与 SSD 之间的数据交互。</p>
 <p>当前系统围绕一个基本闭环展开：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">FPGA 完成 PCIe 链路建立和 NVMe 初始化</span><br><span class="line">-&gt; 建立 Admin Queue 和 IO Queue</span><br><span class="line">-&gt; 外部通过 AXI-Lite 触发 NVMe Read/Write 命令</span><br><span class="line">-&gt; SSD 通过 PCIe 主动读取 SQE / PRP / 数据，或写回数据和 CQE</span><br><span class="line">-&gt; FPGA 匹配 Completion，回收 CID，输出 done/status</span><br></pre></td></tr></table></figure>
 
-<h2 id="项目背景"><a href="#项目背景" class="headerlink" title="项目背景"></a>项目背景</h2><p>在普通 PC 系统中，NVMe SSD 由 CPU、操作系统和驱动共同管理。PCIe 枚举、NVMe 初始化、队列建立、PRP 地址管理、命令提交和 completion 回收都由软件栈完成。</p>
+<h2 id="1-2-项目背景"><a href="#1-2-项目背景" class="headerlink" title="1.2 项目背景"></a>1.2 项目背景</h2><p>在普通 PC 系统中，NVMe SSD 由 CPU、操作系统和驱动共同管理。PCIe 枚举、NVMe 初始化、队列建立、PRP 地址管理、命令提交和 completion 回收都由软件栈完成。</p>
 <p>对于数据采集、实时缓存和硬件加速这类场景，如果每次 IO 都依赖 CPU 参与，会带来软件调度开销，也会增加系统时延的不确定性。这个项目尝试把 SSD 控制链路的一部分下沉到 FPGA 内部，让 FPGA 作为 PCIe Host&#x2F;Root 侧逻辑直接控制 NVMe SSD。</p>
 <p>项目里 FPGA 负责：</p>
 <ul>
@@ -134,18 +132,18 @@
 <li>通过 AXI-Lite 暴露控制寄存器，通过 AXI4 暴露数据缓存窗口。</li>
 </ul>
 <p>这样做的直接意义是：外部采集或计算模块可以先把数据写入 FPGA 侧 AXI4 memory window，再由 FPGA 触发 NVMe Write 写入 SSD；读数据时也可以由 FPGA 触发 NVMe Read，把 SSD 数据读回 AXI4 memory window。对于图像数据、雷达原始数据等连续大带宽数据流，这种结构可以减少 CPU 参与，为后续长时间记录和回放打基础。</p>
-<h2 id="调试接口"><a href="#调试接口" class="headerlink" title="调试接口"></a>调试接口</h2><p>当前工程中几个调试接口的定位如下：</p>
+<p>当前工程中几个调试接口的定位如下：</p>
 <ul>
 <li><code>AXI-Lite</code>：配置寄存器、选择命令来源、触发读写命令、读取状态和错误信息。</li>
 <li><code>AXI4</code>：访问 FPGA 侧数据缓存窗口，测试时由 <code>ssd_rw_test_ctrl</code> 写入或读出 16KB 数据。</li>
 <li><code>VIO</code>：板级调试阶段手动控制测试开始，例如 <code>rw_write_start</code>、<code>rw_write_start_command</code>、<code>rw_read_start_command</code>、<code>rw_read_start</code>。</li>
 <li><code>ILA</code>：观察 PCIe TLP、PRP、CQ route、completion、done pulse 等关键路径。</li>
 </ul>
-<h2 id="核心模块"><a href="#核心模块" class="headerlink" title="核心模块"></a>核心模块</h2><p>当前工程中，SSD 控制器不是一个大状态机，而是拆成几条相对清晰的数据面：</p>
+<h2 id="1-3-当前已经形成的核心模块"><a href="#1-3-当前已经形成的核心模块" class="headerlink" title="1.3 当前已经形成的核心模块"></a>1.3 当前已经形成的核心模块</h2><p>当前工程中，SSD 控制器不是一个大状态机，而是拆成几条相对清晰的数据面：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">pcie_us</span><br><span class="line">    Xilinx PCIe IP + AXI-Stream RQ/RC/CQ/CC 适配</span><br><span class="line"></span><br><span class="line">SSD_ctl</span><br><span class="line">    主 NVMe host control 顶层</span><br><span class="line"></span><br><span class="line">axi_lite_ctl</span><br><span class="line">    AXI-Lite 寄存器、命令来源选择、状态回读</span><br><span class="line"></span><br><span class="line">prp_ctl</span><br><span class="line">    PRP1/PRP2 计算、PRP list 上下文维护、PRP list CplD 返回</span><br><span class="line"></span><br><span class="line">command_ctl</span><br><span class="line">    CID 池、命令构造、command_record、completion 匹配、错误/超时统计</span><br><span class="line"></span><br><span class="line">nvme_queue_ctl</span><br><span class="line">    ASQ/ACQ/IOSQ/IOCQ 队列逻辑、doorbell、CQE 接收、队列调度</span><br><span class="line"></span><br><span class="line">pcie_memory_clt_top</span><br><span class="line">    外侧 AXI 写入与读出、SSD 数据写入与读出、AXI 与 TLP 转接桥</span><br><span class="line"></span><br><span class="line">SSD_pcie_us</span><br><span class="line">    RQ round-robin + CQ route + CC round-robin</span><br></pre></td></tr></table></figure>
 
 <p>这种拆分方便逐个模块验证。command、queue、PRP、memory 和 PCIe TLP route 可以先做单模块仿真，再逐步接成小闭环和完整闭环。</p>
-<h2 id="当前实现范围"><a href="#当前实现范围" class="headerlink" title="当前实现范围"></a>当前实现范围</h2><p>当前已经实现和验证过的内容包括：</p>
+<h2 id="1-4-当前实现范围"><a href="#1-4-当前实现范围" class="headerlink" title="1.4 当前实现范围"></a>1.4 当前实现范围</h2><p>当前已经实现和验证过的内容包括：</p>
 <ul>
 <li>PCIe 链路与 NVMe 初始化流程。</li>
 <li>Admin Queue 和 IO Queue 建立。</li>
@@ -250,6 +248,10 @@
       <ul>
         
           <li>
+            <a href="/2026/05/21/fpga-nvme-host-07-queue-module/">FPGA NVMe Host 项目记录（七）：Queue 模块设计</a>
+          </li>
+        
+          <li>
             <a href="/2026/05/21/fpga-nvme-host-06-command-module/">FPGA NVMe Host 项目记录（六）：Command 模块设计</a>
           </li>
         
@@ -263,10 +265,6 @@
         
           <li>
             <a href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/">FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流</a>
-          </li>
-        
-          <li>
-            <a href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
           </li>
         
       </ul>

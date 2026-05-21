@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="660" viewBox="0 0 1180 660" role="img" aria-labelledby="title desc">
+  <title id="title">Queue module architecture</title>
+  <desc id="desc">Queue module with ASQ, ACQ, 16 IOSQ lanes, one IOCQ, dispatch, route, completion, and doorbell coalescing.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.4; rx: 8; ry: 8; }
+      .ctrl { fill: #eff6ff; }
+      .sq { fill: #fff7ed; }
+      .cq { fill: #f0fdf4; }
+      .route { fill: #f8fafc; }
+      .box-title { font-size: 16px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .mono { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12px; fill: #334155; }
+      .lane { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 7 6; }
+      .tag { font-size: 13px; fill: #0369a1; font-weight: 700; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="1180" height="660" fill="#ffffff"/>
+  <text x="44" y="48" class="title">Queue 模块：控制与存储分离的 ASQ/ACQ/IOSQ/IOCQ</text>
+  <text x="44" y="75" class="subtitle">硬件实例固定 16 路 IO SQ，通过 enable/dispatch/weight 控制实际使用方式</text>
+
+  <rect x="60" y="125" width="250" height="115" class="box ctrl"/>
+  <text x="84" y="158" class="box-title">queue_cmd_dispatch</text>
+  <text x="84" y="186" class="small">Fixed / RR / Weighted RR</text>
+  <text x="84" y="211" class="small">根据 enable 和 weight 选择 IOSQ</text>
+
+  <rect x="410" y="105" width="250" height="95" class="box sq"/>
+  <text x="434" y="138" class="box-title">ASQ</text>
+  <text x="434" y="166" class="mono">Admin SQ @ 0x2000_0000</text>
+  <text x="434" y="188" class="small">SSD MemRd SQE</text>
+
+  <rect x="410" y="225" width="250" height="125" class="box sq"/>
+  <text x="434" y="258" class="box-title">16 路 IOSQ lane</text>
+  <text x="434" y="286" class="mono">QID = 1..16</text>
+  <text x="434" y="311" class="mono">base = 0x2000_2000</text>
+  <text x="434" y="336" class="mono">stride = 4KB, depth = 64</text>
+
+  <rect x="785" y="105" width="250" height="95" class="box cq"/>
+  <text x="809" y="138" class="box-title">ACQ</text>
+  <text x="809" y="166" class="mono">Admin CQ @ 0x2000_1000</text>
+  <text x="809" y="188" class="small">接收 Admin CQE</text>
+
+  <rect x="785" y="225" width="250" height="125" class="box cq"/>
+  <text x="809" y="258" class="box-title">IOCQ</text>
+  <text x="809" y="286" class="mono">base = 0x2001_2000</text>
+  <text x="809" y="311" class="mono">depth = 1024</text>
+  <text x="809" y="336" class="small">接收 IO CQE 并解析 CID/SQID</text>
+
+  <rect x="60" y="430" width="250" height="115" class="box route"/>
+  <text x="84" y="463" class="box-title">queue_enable_ctrl</text>
+  <text x="84" y="491" class="small">requested enable</text>
+  <text x="84" y="516" class="small">admit/live/draining 状态</text>
+
+  <rect x="410" y="430" width="250" height="115" class="box route"/>
+  <text x="434" y="463" class="box-title">rx_addr_route</text>
+  <text x="434" y="491" class="small">按地址窗口分发 SSD MemRd</text>
+  <text x="434" y="516" class="small">命中对应 IOSQ lane</text>
+
+  <rect x="785" y="430" width="250" height="115" class="box route"/>
+  <text x="809" y="463" class="box-title">completion route</text>
+  <text x="809" y="491" class="small">CQE -> command_ctl</text>
+  <text x="809" y="516" class="small">drop disabled / mismatch</text>
+
+  <path d="M310 182 C350 182 370 170 408 158" class="lane"/>
+  <path d="M310 205 C350 230 370 257 408 285" class="lane"/>
+  <path d="M660 152 C705 152 735 152 783 152" class="lane dash"/>
+  <path d="M660 287 C705 287 735 287 783 287" class="lane dash"/>
+  <path d="M910 350 C910 390 910 400 910 428" class="lane"/>
+  <path d="M310 487 C350 487 370 487 408 487" class="lane"/>
+  <path d="M660 487 C705 487 735 487 783 487" class="lane"/>
+  <path d="M535 350 C535 385 535 395 535 428" class="lane"/>
+
+  <text x="682" y="136" class="tag">doorbell</text>
+  <text x="682" y="271" class="tag">doorbell coalescing</text>
+  <text x="795" y="386" class="tag">CID / SQID / status</text>
+</svg>

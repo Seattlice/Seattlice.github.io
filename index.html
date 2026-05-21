@@ -78,6 +78,573 @@
       <div class="outer">
         <section id="main">
   
+    <article id="post-fpga-nvme-host-07-queue-module" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-07-queue-module/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T17:00:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="p-name article-title" href="/2026/05/21/fpga-nvme-host-07-queue-module/">FPGA NVMe Host 项目记录（七）：Queue 模块设计</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>本章以最新工程 <code>C:\Users\10202\Desktop\Learn\pcie\nvme_host_v2\src</code> 中的 Queue 相关源码为准，主要对应 <code>nvme_queue_ctl.v</code>、<code>SQ_ctl.v</code>、<code>SQ_lane_ctl.v</code>、<code>SQ_CQ_tlp.v</code>、<code>SQ_CC_tlp.v</code>、<code>SQ_RQ_tlp.v</code>、<code>queue_CQ_ctl.v</code>、<code>CQ_lane_ctl.v</code>、<code>queue_CQ_CQ_tlp.v</code>、<code>queue_CQ_RQ_tlp.v</code>、<code>queue_cmd_dispatch.v</code>、<code>queue_enable_ctrl.v</code>、<code>queue_rx_addr_route.v</code>、<code>queue_cpl_route.v</code>、<code>queue_sq_head_demux.v</code>、<code>queue_tlp_rr_arb.v</code> 和 <code>queue_doorbell_coalesce.v</code>。</p>
+</blockquote>
+<p><img src="/images/nvme-host/7-queue-module-flow.svg" alt="图 7-1 Queue 模块总体结构"></p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#7-1-%E6%9C%AC%E7%AB%A0%E5%AE%9A%E4%BD%8D">7.1 本章定位</a></li>
+<li><a href="#7-2-%E6%BA%90%E7%A0%81%E6%96%87%E4%BB%B6%E5%AF%B9%E5%BA%94%E5%85%B3%E7%B3%BB">7.2 源码文件对应关系</a></li>
+<li><a href="#7-3-Queue-%E6%A8%A1%E5%9D%97%E6%80%BB%E4%BD%93%E6%9E%B6%E6%9E%84">7.3 Queue 模块总体架构</a></li>
+<li><a href="#7-4-%E5%BD%93%E5%89%8D%E6%9C%89%E6%95%88%E9%98%9F%E5%88%97%E5%9C%B0%E5%9D%80%E8%A7%84%E5%88%92">7.4 当前有效队列地址规划</a></li>
+<li><a href="#7-5-nvmequeuectl-%E9%A1%B6%E5%B1%82%E8%81%8C%E8%B4%A3">7.5 nvme_queue_ctl 顶层职责</a></li>
+<li><a href="#7-6-IO-%E9%98%9F%E5%88%97%E5%90%AF%E5%81%9C%E4%B8%8E-draining">7.6 IO 队列启停与 draining</a></li>
+<li><a href="#7-7-IO-%E5%91%BD%E4%BB%A4%E5%88%86%E5%8F%91-queuecmddispatch">7.7 IO 命令分发 queue_cmd_dispatch</a></li>
+<li><a href="#7-8-SQ-%E5%86%99%E5%85%A5%E4%B8%8E-SSD-%E8%AF%BB%E5%8F%96%E8%B7%AF%E5%BE%84">7.8 SQ 写入与 SSD 读取路径</a><ul>
+<li><a href="#7-8-1-SQE-%E5%86%99%E5%85%A5-SQ-RAM">7.8.1 SQE 写入 SQ RAM</a></li>
+<li><a href="#7-8-2-SSD-%E8%AF%BB%E5%8F%96-SQE">7.8.2 SSD 读取 SQE</a></li>
+</ul>
+</li>
+<li><a href="#7-9-CQ-%E5%86%99%E5%85%A5phase-%E7%AE%A1%E7%90%86%E4%B8%8E-completion-%E8%BE%93%E5%87%BA">7.9 CQ 写入、phase 管理与 completion 输出</a><ul>
+<li><a href="#7-9-1-SSD-%E5%86%99%E5%9B%9E-CQE">7.9.1 SSD 写回 CQE</a></li>
+<li><a href="#7-9-2-CQ-lane-%E5%86%85%E9%83%A8-phase-%E7%AE%A1%E7%90%86">7.9.2 CQ lane 内部 phase 管理</a></li>
+<li><a href="#7-9-3-CQE-%E8%BE%93%E5%87%BA%E7%BB%99-commandctl">7.9.3 CQE 输出给 command_ctl</a></li>
+</ul>
+</li>
+<li><a href="#7-10-IO-completion-route-%E4%B8%8E-SQ-head-%E5%9B%9E%E5%86%99">7.10 IO completion route 与 SQ head 回写</a></li>
+<li><a href="#7-11-IOSQ-%E5%9C%B0%E5%9D%80-route">7.11 IOSQ 地址 route</a></li>
+<li><a href="#7-12-%E5%A4%9A%E8%B7%AF-IOSQ-TLP-%E6%B1%87%E8%81%9A">7.12 多路 IOSQ TLP 汇聚</a></li>
+<li><a href="#7-13-Doorbell-%E8%81%9A%E5%90%88">7.13 Doorbell 聚合</a></li>
+<li><a href="#7-14-AXI-Lite-%E9%85%8D%E7%BD%AE%E4%B8%8E%E7%8A%B6%E6%80%81%E5%9B%9E%E8%AF%BB%E5%85%B3%E7%B3%BB">7.14 AXI-Lite 配置与状态回读关系</a></li>
+<li><a href="#7-15-%E5%BD%93%E5%89%8D%E5%AE%9E%E7%8E%B0%E9%9C%80%E8%A6%81%E6%B3%A8%E6%84%8F%E7%9A%84%E7%BB%86%E8%8A%82">7.15 当前实现需要注意的细节</a><ul>
+<li><a href="#7-15-1-%E9%98%9F%E5%88%97%E5%8A%A8%E6%80%81%E5%A2%9E%E5%87%8F%E6%98%AF-enabledisable%E4%B8%8D%E6%98%AF%E8%BF%90%E8%A1%8C%E6%97%B6-CreateDelete">7.15.1 队列动态增减是 enable&#x2F;disable，不是运行时 Create&#x2F;Delete</a></li>
+<li><a href="#7-15-2-IOCQ-%E6%98%AF%E5%85%B1%E4%BA%AB%E9%98%9F%E5%88%97">7.15.2 IOCQ 是共享队列</a></li>
+<li><a href="#7-15-3-SQ-head-%E4%BE%9D%E8%B5%96-CQE-%E5%9B%9E%E5%86%99">7.15.3 SQ head 依赖 CQE 回写</a></li>
+<li><a href="#7-15-4-phase-%E5%BF%85%E9%A1%BB%E6%98%AF%E5%AF%84%E5%AD%98%E5%99%A8%E7%8A%B6%E6%80%81">7.15.4 phase 必须是寄存器状态</a></li>
+<li><a href="#7-15-5-doorbell-%E8%81%9A%E5%90%88%E4%BF%9D%E5%AD%98%E6%9C%80%E6%96%B0-ptr">7.15.5 doorbell 聚合保存最新 ptr</a></li>
+<li><a href="#7-15-6-queueweight-%E4%B8%BA-0-%E5%BD%93%E5%89%8D%E4%B8%8D%E6%98%AF%E7%A6%81%E7%94%A8">7.15.6 queue_weight 为 0 当前不是禁用</a></li>
+<li><a href="#7-15-7-%E6%9C%89%E6%95%88%E5%9C%B0%E5%9D%80%E4%BB%A5-SSDctl-%E5%8F%82%E6%95%B0%E4%B8%BA%E5%87%86">7.15.7 有效地址以 SSD_ctl 参数为准</a></li>
+</ul>
+</li>
+<li><a href="#7-16-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">7.16 章节总结</a></li>
+</ul>
+<h2 id="7-1-本章定位"><a href="#7-1-本章定位" class="headerlink" title="7.1 本章定位"></a>7.1 本章定位</h2><p>Queue 模块是 NVMe Host 控制器里的队列存储和队列调度层。Command 模块负责构造 512-bit NVMe SQE，并在 completion 回来后做 CID 匹配；Queue 模块负责把这些 SQE 放到 FPGA 侧的 Submission Queue buffer 中，让 SSD 可以通过 PCIe MemRd 主动读取，并接收 SSD 写回的 Completion Queue Entry。</p>
+<p>从系统数据流看，Queue 模块处在 Command 和 PCIe TLP route 之间：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">command_ctl 生成 512-bit NVMe SQE</span><br><span class="line">-&gt; nvme_queue_ctl 写入 ASQ 或某一路 IOSQ</span><br><span class="line">-&gt; SSD 通过 PCIe CQ/MemRd 读取 SQE</span><br><span class="line">-&gt; FPGA 通过 CC 返回 SQE 数据</span><br><span class="line">-&gt; SSD 执行命令</span><br><span class="line">-&gt; SSD 通过 PCIe CQ/MemWr 写回 CQE</span><br><span class="line">-&gt; nvme_queue_ctl 解析 CQE</span><br><span class="line">-&gt; 输出 CID/SQID/status 给 command_ctl</span><br></pre></td></tr></table></figure>
+
+<p>这一章重点说明三条链路：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">1. SQ 链路：命令如何进入队列，SSD 如何读走 SQE。</span><br><span class="line">2. CQ 链路：SSD 如何写回 CQE，FPGA 如何解析 completion。</span><br><span class="line">3. 多队列链路：16 路 IOSQ 如何调度、route、启停和汇聚。</span><br></pre></td></tr></table></figure>
+
+<p>当前设计的一个重要取舍是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">硬件固定实例化 16 路 IOSQ；</span><br><span class="line">运行时通过 AXI-Lite enable/disable 控制哪些队列参与调度；</span><br><span class="line">IO completion 使用一个共享 IOCQ，再根据 CQE.SQID 回到对应 IO queue。</span><br></pre></td></tr></table></figure>
+
+<p>也就是说，这里的“动态队列”不是动态生成&#x2F;删除 RTL 实例，而是固定硬件资源上的运行时启用、禁用和 draining。</p>
+<h2 id="7-2-源码文件对应关系"><a href="#7-2-源码文件对应关系" class="headerlink" title="7.2 源码文件对应关系"></a>7.2 源码文件对应关系</h2><p>Queue 模块由多个文件组合完成，不是一个单独的大状态机。源码对应关系如下：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>nvme_queue_ctl.v</code></td>
+<td>Queue 顶层，例化 ASQ、ACQ、16 路 IOSQ、IOCQ、dispatch、route、RR arbiter</td>
+</tr>
+<tr>
+<td><code>SQ_ctl.v</code></td>
+<td>SQ 子系统封装，内部包含 SQ lane、SSD 读 SQE 的 CQ&#x2F;CC path、SQ doorbell path</td>
+</tr>
+<tr>
+<td><code>SQ_lane_ctl.v</code></td>
+<td>保存 SQE，维护 SQ tail&#x2F;head，写 SQ RAM，响应 SSD 读取</td>
+</tr>
+<tr>
+<td><code>SQ_CQ_tlp.v</code></td>
+<td>解析 SSD 对 SQ window 的 MemRd，计算 SQE index</td>
+</tr>
+<tr>
+<td><code>SQ_CC_tlp.v</code></td>
+<td>根据 SQ lane 读出的 SQE，返回 CC completion data</td>
+</tr>
+<tr>
+<td><code>SQ_RQ_tlp.v</code></td>
+<td>生成 SQ doorbell 的 RQ MemWr</td>
+</tr>
+<tr>
+<td><code>queue_CQ_ctl.v</code></td>
+<td>CQ 子系统封装，内部包含 CQ lane、SSD 写 CQE 的 CQ path、CQ doorbell path</td>
+</tr>
+<tr>
+<td><code>CQ_lane_ctl.v</code></td>
+<td>接收 CQE，维护 CQ head&#x2F;tail&#x2F;phase，输出 completion 和 SQ head</td>
+</tr>
+<tr>
+<td><code>queue_CQ_CQ_tlp.v</code></td>
+<td>解析 SSD 对 CQ window 的 MemWr，提取 128-bit CQE</td>
+</tr>
+<tr>
+<td><code>queue_CQ_RQ_tlp.v</code></td>
+<td>生成 CQ doorbell 的 RQ MemWr</td>
+</tr>
+<tr>
+<td><code>queue_cmd_dispatch.v</code></td>
+<td>IO SQE 分发，支持 Fixed、RR、Weighted RR</td>
+</tr>
+<tr>
+<td><code>queue_enable_ctrl.v</code></td>
+<td>维护 IO queue enable、live、draining 和 inflight 计数</td>
+</tr>
+<tr>
+<td><code>queue_rx_addr_route.v</code></td>
+<td>按地址把 SSD 对 IOSQ window 的 MemRd route 到对应 IOSQ lane</td>
+</tr>
+<tr>
+<td><code>queue_cpl_route.v</code></td>
+<td>把 ACQ&#x2F;IOCQ completion 整理成 command_ctl 可消费的 completion bus</td>
+</tr>
+<tr>
+<td><code>queue_sq_head_demux.v</code></td>
+<td>根据 CQE.SQID 把 SQ head 更新送回对应 IOSQ lane</td>
+</tr>
+<tr>
+<td><code>queue_tlp_rr_arb.v</code></td>
+<td>将 16 路 IOSQ 输出的 TLP 按 RR&#x2F;Weighted RR 汇聚成一路</td>
+</tr>
+<tr>
+<td><code>queue_doorbell_coalesce.v</code></td>
+<td>SQ&#x2F;CQ doorbell 聚合，按数量或时间阈值触发实际 doorbell 写</td>
+</tr>
+</tbody></table>
+<p>整体层级可以简化成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">nvme_queue_ctl</span><br><span class="line">  ├─ queue_enable_ctrl</span><br><span class="line">  ├─ queue_cmd_dispatch</span><br><span class="line">  ├─ queue_cpl_route</span><br><span class="line">  ├─ queue_sq_head_demux</span><br><span class="line">  ├─ SQ_ctl             // ASQ</span><br><span class="line">  ├─ SQ_ctl x16         // IOSQ lanes</span><br><span class="line">  ├─ queue_rx_addr_route</span><br><span class="line">  ├─ queue_tlp_rr_arb x3</span><br><span class="line">  ├─ queue_CQ_ctl       // ACQ</span><br><span class="line">  └─ queue_CQ_ctl       // shared IOCQ</span><br></pre></td></tr></table></figure>
+
+<p>其中 <code>SQ_ctl</code> 和 <code>queue_CQ_ctl</code> 又是二级封装：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">SQ_ctl</span><br><span class="line">  ├─ SQ_lane_ctl</span><br><span class="line">  ├─ SQ_CQ_tlp</span><br><span class="line">  ├─ SQ_CC_tlp</span><br><span class="line">  ├─ SQ_RQ_tlp</span><br><span class="line">  └─ queue_doorbell_coalesce</span><br><span class="line"></span><br><span class="line">queue_CQ_ctl</span><br><span class="line">  ├─ CQ_lane_ctl</span><br><span class="line">  ├─ queue_CQ_CQ_tlp</span><br><span class="line">  ├─ queue_CQ_RQ_tlp</span><br><span class="line">  └─ queue_doorbell_coalesce</span><br></pre></td></tr></table></figure>
+
+<h2 id="7-3-Queue-模块总体架构"><a href="#7-3-Queue-模块总体架构" class="headerlink" title="7.3 Queue 模块总体架构"></a>7.3 Queue 模块总体架构</h2><p><code>nvme_queue_ctl.v</code> 是 Queue 模块顶层。它的参数中定义了队列数量、队列深度、地址窗口、TLP 宽度和 doorbell 聚合策略：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">parameter</span> IO_QUEUE_COUNT = <span class="number">16</span>;</span><br><span class="line"><span class="keyword">parameter</span> QUEUE_ID_WIDTH = <span class="number">5</span>;</span><br><span class="line"><span class="keyword">parameter</span> WEIGHT_WIDTH   = <span class="number">8</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">parameter</span> ADMIN_SQ_DEPTH = <span class="number">16</span>;</span><br><span class="line"><span class="keyword">parameter</span> IO_SQ_DEPTH    = <span class="number">64</span>;</span><br><span class="line"><span class="keyword">parameter</span> ADMIN_CQ_DEPTH = <span class="number">16</span>;</span><br><span class="line"><span class="keyword">parameter</span> IO_CQ_DEPTH    = <span class="number">1024</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">parameter</span> SQ_DB_COALESCE_ENABLE       = <span class="number">1</span>;</span><br><span class="line"><span class="keyword">parameter</span> SQ_DB_COALESCE_COUNT_THRESH = <span class="number">8&#x27;d4</span>;</span><br><span class="line"><span class="keyword">parameter</span> SQ_DB_COALESCE_TIME_THRESH  = <span class="number">16&#x27;d32</span>;</span><br><span class="line"><span class="keyword">parameter</span> CQ_DB_COALESCE_ENABLE       = <span class="number">1</span>;</span><br><span class="line"><span class="keyword">parameter</span> CQ_DB_COALESCE_COUNT_THRESH = <span class="number">8&#x27;d8</span>;</span><br><span class="line"><span class="keyword">parameter</span> CQ_DB_COALESCE_TIME_THRESH  = <span class="number">16&#x27;d64</span>;</span><br></pre></td></tr></table></figure>
+
+<p>需要注意：<code>nvme_queue_ctl.v</code> 自己有默认参数，但当前系统中真正生效的是 <code>SSD_ctl.v</code> 例化时传入的参数。例如 <code>SSD_ctl.v</code> 中定义：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">parameter</span> ADMIN_SQ_ADDRESS = <span class="number">32&#x27;h2000_0000</span>;</span><br><span class="line"><span class="keyword">parameter</span> ADMIN_CQ_ADDRESS = <span class="number">32&#x27;h2000_1000</span>;</span><br><span class="line"><span class="keyword">parameter</span> IO_SQ_ADDRESS    = <span class="number">32&#x27;h2000_2000</span>;</span><br><span class="line"><span class="keyword">parameter</span> IO_CQ_ADDRESS    = <span class="number">32&#x27;h2001_2000</span>;</span><br><span class="line"><span class="keyword">parameter</span> RANGE_SIZE       = <span class="number">32&#x27;h1000</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">parameter</span> ADMIN_SQ_DEPTH   = <span class="number">64</span>;</span><br><span class="line"><span class="keyword">parameter</span> ADMIN_CQ_DEPTH   = <span class="number">64</span>;</span><br><span class="line"><span class="keyword">parameter</span> IO_SQ_DEPTH      = <span class="number">64</span>;</span><br><span class="line"><span class="keyword">parameter</span> IO_CQ_DEPTH      = <span class="number">1024</span>;</span><br></pre></td></tr></table></figure>
+
+<p>并在例化 <code>nvme_queue_ctl</code> 时传入：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.ADMIN_SQ_DEPTH</span> (ADMIN_SQ_DEPTH),</span><br><span class="line"><span class="variable">.IO_SQ_DEPTH</span>    (IO_SQ_DEPTH),</span><br><span class="line"><span class="variable">.ADMIN_CQ_DEPTH</span> (ADMIN_CQ_DEPTH),</span><br><span class="line"><span class="variable">.IO_CQ_DEPTH</span>    (IO_CQ_DEPTH),</span><br><span class="line"></span><br><span class="line"><span class="variable">.ASQ_BASE_ADDR</span>  (&#123;<span class="number">32&#x27;d0</span>, ADMIN_SQ_ADDRESS&#125;),</span><br><span class="line"><span class="variable">.ACQ_BASE_ADDR</span>  (&#123;<span class="number">32&#x27;d0</span>, ADMIN_CQ_ADDRESS&#125;),</span><br><span class="line"><span class="variable">.IOSQ_BASE_ADDR</span> (&#123;<span class="number">32&#x27;d0</span>, IO_SQ_ADDRESS&#125;),</span><br><span class="line"><span class="variable">.IOSQ_STRIDE</span>    (&#123;<span class="number">32&#x27;d0</span>, RANGE_SIZE&#125;),</span><br><span class="line"><span class="variable">.IOSQ_WINDOW_SIZE</span>(&#123;<span class="number">32&#x27;d0</span>, RANGE_SIZE&#125;),</span><br><span class="line"><span class="variable">.IOCQ_BASE_ADDR</span> (&#123;<span class="number">32&#x27;d0</span>, IO_CQ_ADDRESS&#125;)</span><br></pre></td></tr></table></figure>
+
+<p>因此看地址规划时，要以 <code>SSD_ctl.v</code> 的顶层参数为准，而不是只看 <code>nvme_queue_ctl.v</code> 的默认值。</p>
+<h2 id="7-4-当前有效队列地址规划"><a href="#7-4-当前有效队列地址规划" class="headerlink" title="7.4 当前有效队列地址规划"></a>7.4 当前有效队列地址规划</h2><p>按当前 <code>SSD_ctl.v</code> 的参数，队列地址规划如下：</p>
+<table>
+<thead>
+<tr>
+<th>队列</th>
+<th>数量</th>
+<th>深度</th>
+<th>Entry 大小</th>
+<th>有效存储大小</th>
+<th>地址窗口</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ASQ</td>
+<td>1</td>
+<td>64</td>
+<td>64B SQE</td>
+<td>4KB</td>
+<td><code>0x2000_0000</code></td>
+</tr>
+<tr>
+<td>ACQ</td>
+<td>1</td>
+<td>64</td>
+<td>16B CQE</td>
+<td>1KB</td>
+<td><code>0x2000_1000</code></td>
+</tr>
+<tr>
+<td>IOSQ</td>
+<td>16</td>
+<td>每路 64</td>
+<td>64B SQE</td>
+<td>每路 4KB</td>
+<td><code>0x2000_2000 + (QID-1)*0x1000</code></td>
+</tr>
+<tr>
+<td>IOCQ</td>
+<td>1</td>
+<td>1024</td>
+<td>16B CQE</td>
+<td>16KB</td>
+<td><code>0x2001_2000</code></td>
+</tr>
+</tbody></table>
+<p>16 路 IOSQ 的地址展开如下：</p>
+<table>
+<thead>
+<tr>
+<th>QID</th>
+<th>IOSQ base</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>1</td>
+<td><code>0x2000_2000</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>0x2000_3000</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>0x2000_4000</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>0x2000_5000</code></td>
+</tr>
+<tr>
+<td>…</td>
+<td>…</td>
+</tr>
+<tr>
+<td>15</td>
+<td><code>0x2001_0000</code></td>
+</tr>
+<tr>
+<td>16</td>
+<td><code>0x2001_1000</code></td>
+</tr>
+</tbody></table>
+<p>IOCQ 从 <code>0x2001_2000</code> 开始，因此和 16 路 IOSQ 不重叠：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">IOSQ16 window: 0x2001_1000 ~ 0x2001_1fff</span><br><span class="line">IOCQ window : 0x2001_2000 ~ 0x2001_5fff</span><br></pre></td></tr></table></figure>
+
+<p>这里每一路 IOSQ 固定分配 4KB window，是因为 64 条 SQE 每条 64B，刚好占满 4KB：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">64 entries * 64 bytes = 4096 bytes</span><br></pre></td></tr></table></figure>
+
+<p>IOCQ 深度为 1024，每条 CQE 16B，因此需要 16KB：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">1024 entries * 16 bytes = 16384 bytes</span><br></pre></td></tr></table></figure>
+
+<p>这也是为什么共享 IOCQ 不能只按 4KB 理解。如果总深度定为 1024，IOCQ 至少要覆盖 16KB 地址范围。</p>
+<h2 id="7-5-nvme-queue-ctl-顶层职责"><a href="#7-5-nvme-queue-ctl-顶层职责" class="headerlink" title="7.5 nvme_queue_ctl 顶层职责"></a>7.5 nvme_queue_ctl 顶层职责</h2><p><code>nvme_queue_ctl.v</code> 对 Command 模块暴露两组命令输入：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [NVME_COMMAND_WIDTH-<span class="number">1</span>:<span class="number">0</span>] admin_nvme_command_data;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                          admin_nvme_command_valid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                          admin_nvme_command_ready;</span><br><span class="line"></span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [NVME_COMMAND_WIDTH-<span class="number">1</span>:<span class="number">0</span>] io_nvme_command_data;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                          io_nvme_command_valid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                          io_nvme_command_ready;</span><br></pre></td></tr></table></figure>
+
+<p>Admin command 直接进入 ASQ；IO command 先经过 <code>queue_cmd_dispatch</code> 选择某一路 IOSQ：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">Admin command -&gt; u_asq_ctl</span><br><span class="line">IO command    -&gt; queue_cmd_dispatch -&gt; u_iosq_lane[n]</span><br></pre></td></tr></table></figure>
+
+<p>completion 输出采用 bus 形式，端口数量为 <code>IO_QUEUE_COUNT + 1</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [IO_QUEUE_COUNT:<span class="number">0</span>] cpl_valid;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [IO_QUEUE_COUNT:<span class="number">0</span>] cpl_ready;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [(IO_QUEUE_COUNT+<span class="number">1</span>)*ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] cpl_cid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [(IO_QUEUE_COUNT+<span class="number">1</span>)*QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] cpl_queue_id;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [(IO_QUEUE_COUNT+<span class="number">1</span>)*<span class="number">16</span>-<span class="number">1</span>:<span class="number">0</span>] cpl_sqid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [(IO_QUEUE_COUNT+<span class="number">1</span>)*<span class="number">16</span>-<span class="number">1</span>:<span class="number">0</span>] cpl_sq_head;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [IO_QUEUE_COUNT:<span class="number">0</span>] cpl_status_ok;</span><br></pre></td></tr></table></figure>
+
+<p>其中：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">cpl bus[0]    = Admin completion</span><br><span class="line">cpl bus[1:16] = IO completion，按 SQID route 到对应 queue_id</span><br></pre></td></tr></table></figure>
+
+<p>这组 bus 会接到 <code>command_ctl.v</code> 的 <code>command_record_round_robin</code>，最终按 CID 查 command record。</p>
+<h2 id="7-6-IO-队列启停与-draining"><a href="#7-6-IO-队列启停与-draining" class="headerlink" title="7.6 IO 队列启停与 draining"></a>7.6 IO 队列启停与 draining</h2><p>IO queue 的运行时启停由 <code>queue_enable_ctrl.v</code> 完成。它的输入是 AXI-Lite 配置后的 <code>requested_enable</code>，同时监听 IO command dispatch 和 IO completion：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> [IO_QUEUE_COUNT-<span class="number">1</span>:<span class="number">0</span>] requested_enable;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> dispatch_fire;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> [QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] dispatch_queue_id;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> completion_fire;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] completion_sqid;</span><br></pre></td></tr></table></figure>
+
+<p>内部为每个 IO queue 维护 inflight 计数：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">reg</span> [INFLIGHT_WIDTH-<span class="number">1</span>:<span class="number">0</span>] inflight_reg [<span class="number">0</span>:IO_QUEUE_COUNT-<span class="number">1</span>];</span><br></pre></td></tr></table></figure>
+
+<p>当某个 queue 被分发一条新命令时，对应 inflight 加一：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">inc_hit = dispatch_fire &amp;&amp;</span><br><span class="line">          (dispatch_queue_id == qid_value);</span><br></pre></td></tr></table></figure>
+
+<p>当该 queue 的 completion 回来时，对应 inflight 减一：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">dec_hit = completion_fire &amp;&amp;</span><br><span class="line">          (completion_sqid[QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] == qid_value);</span><br></pre></td></tr></table></figure>
+
+<p>最终输出三个状态：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> admit_enable[n] = requested_enable[n];</span><br><span class="line"><span class="keyword">assign</span> live_enable[n]  = requested_enable[n] ||</span><br><span class="line">                         (inflight_reg[n] != &#123;INFLIGHT_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;);</span><br><span class="line"><span class="keyword">assign</span> draining[n]     = !requested_enable[n] &amp;&amp;</span><br><span class="line">                         (inflight_reg[n] != &#123;INFLIGHT_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;);</span><br></pre></td></tr></table></figure>
+
+<p>这三个状态的含义不同：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>admit_enable</code></td>
+<td>是否允许新 IO 命令继续进入该 queue</td>
+</tr>
+<tr>
+<td><code>live_enable</code></td>
+<td>该 queue 是否仍要保持硬件 lane 活着</td>
+</tr>
+<tr>
+<td><code>draining</code></td>
+<td>用户已经关闭该 queue，但还有未完成命令，需要等待 completion</td>
+</tr>
+</tbody></table>
+<p><code>nvme_queue_ctl.v</code> 里 IO lane 的 reset 使用 <code>live_enable</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.sys_rst_n</span>(sys_rst_n &amp;&amp; io_queue_live_enable[n])</span><br></pre></td></tr></table></figure>
+
+<p>也就是说，queue 被 disable 后不会立即 reset。只有它没有 inflight 命令时，<code>live_enable</code> 才会下降，该 lane 才会被复位清空。这个设计避免了禁用队列时直接丢掉在途命令。</p>
+<h2 id="7-7-IO-命令分发-queue-cmd-dispatch"><a href="#7-7-IO-命令分发-queue-cmd-dispatch" class="headerlink" title="7.7 IO 命令分发 queue_cmd_dispatch"></a>7.7 IO 命令分发 queue_cmd_dispatch</h2><p><code>queue_cmd_dispatch.v</code> 接收一条 IO SQE，然后根据配置选择一个 IOSQ lane。它支持三种模式：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] DISPATCH_FIXED       = <span class="number">2&#x27;d0</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] DISPATCH_ROUND_ROBIN = <span class="number">2&#x27;d1</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] DISPATCH_WEIGHTED_RR = <span class="number">2&#x27;d2</span>;</span><br></pre></td></tr></table></figure>
+
+<p>可参与调度的队列由 enable 和 ready 共同决定：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">eligible_mask = io_queue_enable &amp; out_cmd_ready;</span><br></pre></td></tr></table></figure>
+
+<p>这里的 <code>io_queue_enable</code> 接的是 <code>queue_enable_ctrl</code> 输出的 <code>admit_enable</code>，因此被 disable 的 queue 不再接收新命令；<code>out_cmd_ready</code> 来自各个 SQ lane，表示该 lane 当前没有满。</p>
+<p>Fixed 模式下，模块只选择指定 QID：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (fixed_queue_id == (IO_QID_BASE + i)) <span class="keyword">begin</span></span><br><span class="line">    fixed_id_hit_reg   = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    selected_index_reg = i;</span><br><span class="line">    selected_valid_reg = eligible_mask[i];</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>如果 fixed QID 不在 1~16 范围内，会输出：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">fixed_queue_id_invalid = in_cmd_valid &amp;&amp;</span><br><span class="line">                         (dispatch_mode == DISPATCH_FIXED) &amp;&amp;</span><br><span class="line">                         fixed_invalid_reg;</span><br></pre></td></tr></table></figure>
+
+<p>RR 模式下，模块从 <code>rr_ptr_reg</code> 开始查找下一个 eligible queue：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">rr_pick = pick_rr(eligible_mask, rr_ptr_reg);</span><br></pre></td></tr></table></figure>
+
+<p>命令成功分发后，RR 指针移动到下一个 queue：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (dispatch_fire &amp;&amp;</span><br><span class="line">    ((dispatch_mode == DISPATCH_ROUND_ROBIN) ||</span><br><span class="line">     (dispatch_mode == DISPATCH_WEIGHTED_RR))) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (selected_index_reg == IO_QUEUE_COUNT-<span class="number">1</span>)</span><br><span class="line">        next_rr_ptr = &#123;QUEUE_ID_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        next_rr_ptr = selected_index_reg + <span class="number">1&#x27;b1</span>;</span><br><span class="line"></span><br><span class="line">    rr_ptr_reg &lt;= next_rr_ptr;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>Weighted RR 模式下，每个 queue 有一个 credit，credit 用完后等全部 eligible queue 的 credit 都耗尽再 refill：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">weight_refill = !credit_any_eligible;</span><br><span class="line"></span><br><span class="line">effective_weight = (current_weight == &#123;WEIGHT_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;) ?</span><br><span class="line">                   DEFAULT_WEIGHT : current_weight;</span><br></pre></td></tr></table></figure>
+
+<p>需要注意：当前代码中 <code>queue_weight=0</code> 会被解释为 <code>DEFAULT_WEIGHT</code>，不是禁用该 queue。禁用队列应使用 <code>io_queue_enable</code>。</p>
+<p>最终输出为 one-hot：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> selected_queue_id = selected_valid_reg ?</span><br><span class="line">                           (IO_QID_BASE + selected_index_reg) :</span><br><span class="line">                           &#123;QUEUE_ID_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> selected_onehot = selected_valid_reg ?</span><br><span class="line">                         (&#123; &#123;(IO_QUEUE_COUNT-<span class="number">1</span>)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, <span class="number">1&#x27;b1</span> &#125; &lt;&lt; selected_index_reg) :</span><br><span class="line">                         &#123;IO_QUEUE_COUNT&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> out_cmd_valid = &#123;IO_QUEUE_COUNT&#123;in_cmd_valid&#125;&#125; &amp; selected_onehot;</span><br></pre></td></tr></table></figure>
+
+<p><code>command_ctl.v</code> 会把 <code>io_selected_queue_id</code> 记录进 command_record，所以 completion 回来后可以检查 SQID 和 record 中的 queue_id 是否一致。</p>
+<h2 id="7-8-SQ-写入与-SSD-读取路径"><a href="#7-8-SQ-写入与-SSD-读取路径" class="headerlink" title="7.8 SQ 写入与 SSD 读取路径"></a>7.8 SQ 写入与 SSD 读取路径</h2><p><code>SQ_ctl.v</code> 是 Submission Queue 的封装模块。它把 SQ 相关逻辑分成三段：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">SQ_lane_ctl：保存 SQE，维护 tail/head</span><br><span class="line">SQ_CQ_tlp ：解析 SSD 对 SQ window 的 MemRd</span><br><span class="line">SQ_CC_tlp ：返回 SQE data 给 SSD</span><br><span class="line">SQ_RQ_tlp ：写 SQ doorbell</span><br></pre></td></tr></table></figure>
+
+<h3 id="7-8-1-SQE-写入-SQ-RAM"><a href="#7-8-1-SQE-写入-SQ-RAM" class="headerlink" title="7.8.1 SQE 写入 SQ RAM"></a>7.8.1 SQE 写入 SQ RAM</h3><p><code>SQ_lane_ctl.v</code> 中的写入 ready 条件是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> nvme_command_ready = next_tail != head_ptr_reg;</span><br></pre></td></tr></table></figure>
+
+<p>这里用 ring buffer 的方式判断队列是否满。<code>tail_ptr_reg</code> 是 FPGA host 侧写入 SQE 的位置，<code>head_ptr_reg</code> 来自 SSD completion 中带回的 SQ head。</p>
+<p>当 <code>nvme_command_valid &amp;&amp; nvme_command_ready</code> 成立时，模块把 SQE 写入 DPRAM：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (nvme_command_valid &amp;&amp; nvme_command_ready) <span class="keyword">begin</span></span><br><span class="line">    queue_porta_en_next = <span class="number">1&#x27;d1</span>;</span><br><span class="line">    queue_nvme_command_data_next = nvme_command_data;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>实际 RAM 写口为：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">DPRAM #(</span><br><span class="line">    <span class="variable">.WIDTH</span> (NVME_COMMAND_WIDTH),</span><br><span class="line">    <span class="variable">.DEPTH</span> (SQ_DEPTH)</span><br><span class="line">) u_sq_queue_ram (</span><br><span class="line">    <span class="variable">.clka</span>  (sys_clk),</span><br><span class="line">    <span class="variable">.ena</span>   (queue_porta_en_reg),</span><br><span class="line">    <span class="variable">.wea</span>   (<span class="number">1&#x27;b1</span>),</span><br><span class="line">    <span class="variable">.addra</span> (tail_ptr_reg),</span><br><span class="line">    <span class="variable">.dina</span>  (queue_nvme_command_data_reg),</span><br><span class="line">    ...</span><br><span class="line">);</span><br></pre></td></tr></table></figure>
+
+<p>写入成功后，tail 前进：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (queue_porta_en_reg) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (tail_ptr_reg == SQ_DEPTH - <span class="number">1</span>)</span><br><span class="line">        tail_ptr_next = <span class="number">&#x27;d0</span>;</span><br><span class="line">    <span class="keyword">else</span></span><br><span class="line">        tail_ptr_next = tail_ptr_reg + <span class="number">1&#x27;d1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>同时产生 SQ doorbell 更新：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (queue_porta_en_reg) <span class="keyword">begin</span></span><br><span class="line">    rq_sq_tail_next = &#123;&#123;(<span class="number">16</span>-SQ_ADDR_W)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, tail_ptr_next&#125;;</span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> sys_clk <span class="keyword">or</span> <span class="keyword">negedge</span> sys_rst_n)</span><br><span class="line">    <span class="keyword">if</span>(!sys_rst_n)</span><br><span class="line">        rq_db_trig_reg &lt;= <span class="number">&#x27;d0</span>;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (rq_ready &amp;&amp; rq_db_trig_reg)</span><br><span class="line">        rq_db_trig_reg &lt;= <span class="number">&#x27;d0</span>;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (queue_porta_en_reg)</span><br><span class="line">        rq_db_trig_reg &lt;= <span class="number">&#x27;d1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>这里 <code>rq_db_trig_reg</code> 先进入 <code>queue_doorbell_coalesce</code>，再由 <code>SQ_RQ_tlp</code> 生成写 SSD doorbell 的 RQ MemWr。</p>
+<h3 id="7-8-2-SSD-读取-SQE"><a href="#7-8-2-SSD-读取-SQE" class="headerlink" title="7.8.2 SSD 读取 SQE"></a>7.8.2 SSD 读取 SQE</h3><p>SSD 看到 doorbell 后，会通过 PCIe MemRd 读取 FPGA 侧的 SQE。这个请求从 PCIe IP 的 CQ 通道进来，进入 <code>SQ_CQ_tlp.v</code>。</p>
+<p><code>SQ_CQ_tlp.v</code> 先判断 TLP 是否为 MemRd：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> s1_is_mrd_3dw = (s1_fmt == <span class="number">3&#x27;b000</span>) &amp;&amp; (s1_type == <span class="number">5&#x27;b00000</span>);</span><br><span class="line"><span class="keyword">wire</span> s1_is_mrd_4dw = (s1_fmt == <span class="number">3&#x27;b001</span>) &amp;&amp; (s1_type == <span class="number">5&#x27;b00000</span>);</span><br><span class="line"><span class="keyword">wire</span> s1_is_mrd     = s1_is_mrd_3dw || s1_is_mrd_4dw;</span><br></pre></td></tr></table></figure>
+
+<p>然后提取地址并做地址命中：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> s2_addr_hit = (s2_addr_reg &gt;= SQ_BASE_ADDR) &amp;&amp;</span><br><span class="line">                   (s2_addr_reg &lt; (SQ_BASE_ADDR + (SQ_DEPTH * <span class="number">64</span>)));</span><br></pre></td></tr></table></figure>
+
+<p>因为每条 SQE 是 64B，所以 index 用地址右移 6 bit 后的低位：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [SQ_ADDR_W:<span class="number">0</span>] s2_calc_index = s2_addr_reg[SQ_ADDR_W+<span class="number">6</span> : <span class="number">6</span>];</span><br></pre></td></tr></table></figure>
+
+<p>命中后输出读请求给 <code>SQ_lane_ctl</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> cq_rd_req_valid = cq_rd_req_valid_reg;</span><br><span class="line"><span class="keyword">assign</span> cq_rd_index     = cq_rd_index_reg;</span><br><span class="line"><span class="keyword">assign</span> cq_rd_tag       = cq_rd_tag_reg;</span><br><span class="line"><span class="keyword">assign</span> cq_request_id   = cq_request_id_reg;</span><br><span class="line"><span class="keyword">assign</span> cq_lower_adress = cq_lower_adress_reg;</span><br></pre></td></tr></table></figure>
+
+<p><code>SQ_lane_ctl</code> 用 B 口读取 SQ RAM：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.clkb</span>  (sys_clk),</span><br><span class="line"><span class="variable">.enb</span>   (cq_rd_req_valid),</span><br><span class="line"><span class="variable">.web</span>   (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.addrb</span> (cq_rd_index),</span><br><span class="line"><span class="variable">.doutb</span> (cc_rdata_rd)</span><br></pre></td></tr></table></figure>
+
+<p>并把 tag、requester_id、lower address 寄存一拍后交给 <code>SQ_CC_tlp</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> cc_tag          = cq_rd_tag_reg;</span><br><span class="line"><span class="keyword">assign</span> cc_rdata        = cc_rdata_rd;</span><br><span class="line"><span class="keyword">assign</span> cc_rdata_valid  = cq_rd_req_valid_reg;</span><br><span class="line"><span class="keyword">assign</span> cc_request_id   = cq_request_id_reg;</span><br><span class="line"><span class="keyword">assign</span> cc_lower_adress = cq_lower_adress_reg;</span><br></pre></td></tr></table></figure>
+
+<p>这样 SSD 的 MemRd 请求可以得到正确的 CC completion data。</p>
+<h2 id="7-9-CQ-写入、phase-管理与-completion-输出"><a href="#7-9-CQ-写入、phase-管理与-completion-输出" class="headerlink" title="7.9 CQ 写入、phase 管理与 completion 输出"></a>7.9 CQ 写入、phase 管理与 completion 输出</h2><p>CQ 方向由 <code>queue_CQ_ctl.v</code> 管理。它内部包括：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">queue_CQ_CQ_tlp：解析 SSD 写回 CQE 的 MemWr</span><br><span class="line">CQ_lane_ctl    ：保存和解析 CQE，维护 CQ head/tail/phase</span><br><span class="line">queue_CQ_RQ_tlp：写 CQ doorbell</span><br></pre></td></tr></table></figure>
+
+<h3 id="7-9-1-SSD-写回-CQE"><a href="#7-9-1-SSD-写回-CQE" class="headerlink" title="7.9.1 SSD 写回 CQE"></a>7.9.1 SSD 写回 CQE</h3><p>SSD 完成命令后，会对 FPGA 侧 CQ window 发 MemWr。<code>queue_CQ_CQ_tlp.v</code> 判断 TLP 是否为 MemWr：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> s1_is_mwr_3dw = (s1_fmt == <span class="number">3&#x27;b010</span>) &amp;&amp; (s1_type == <span class="number">5&#x27;b00000</span>);</span><br><span class="line"><span class="keyword">wire</span> s1_is_mwr_4dw = (s1_fmt == <span class="number">3&#x27;b011</span>) &amp;&amp; (s1_type == <span class="number">5&#x27;b00000</span>);</span><br><span class="line"><span class="keyword">wire</span> s1_is_mwr     = s1_is_mwr_3dw || s1_is_mwr_4dw;</span><br></pre></td></tr></table></figure>
+
+<p>然后检查地址是否落在 CQ window 内：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> s2_addr_hit = (s2_addr_reg &gt;= CQ_BASE_ADDR) &amp;&amp;</span><br><span class="line">                   (s2_addr_reg &lt; (CQ_BASE_ADDR + (CQ_DEPTH * <span class="number">16</span>)));</span><br></pre></td></tr></table></figure>
+
+<p>每条 CQE 是 16B，所以 CQ window 的有效大小是 <code>CQ_DEPTH * 16</code>。命中后提取 payload 低 128 bit 作为 CQE：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (rx_req_tlp_valid[<span class="number">0</span>] &amp;&amp; rx_req_tlp_sop[<span class="number">0</span>] &amp;&amp; s1_is_mwr) <span class="keyword">begin</span></span><br><span class="line">    cq_cqe_data_reg &lt;= rx_req_tlp_data[CQE_WIDTH-<span class="number">1</span>:<span class="number">0</span>];</span><br><span class="line">    s2_addr_reg     &lt;= s1_extracted_addr_comb;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<h3 id="7-9-2-CQ-lane-内部-phase-管理"><a href="#7-9-2-CQ-lane-内部-phase-管理" class="headerlink" title="7.9.2 CQ lane 内部 phase 管理"></a>7.9.2 CQ lane 内部 phase 管理</h3><p><code>CQ_lane_ctl.v</code> 中维护了两个 phase 寄存器：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">reg</span> write_expected_phase_next, write_expected_phase_reg;</span><br><span class="line"><span class="keyword">reg</span> expected_phase_next, expected_phase_reg;</span><br></pre></td></tr></table></figure>
+
+<p><code>write_expected_phase_reg</code> 用于入口写入 CQE 时判断 SSD 写来的 CQE 是否是新 entry：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> ingress_cqe_phase   = cq_cqe_data[<span class="number">112</span>];</span><br><span class="line"><span class="keyword">wire</span> ingress_phase_match = (ingress_cqe_phase == write_expected_phase_reg);</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> cq_accept  = cq_ready &amp;&amp; cq_rd_req_valid;</span><br><span class="line"><span class="keyword">wire</span> write_fire = cq_accept &amp;&amp; ingress_phase_match;</span><br></pre></td></tr></table></figure>
+
+<p>当 tail 走到 CQ_DEPTH-1 后 wrap，写入侧 expected phase 翻转：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (ingress_phase_match) <span class="keyword">begin</span></span><br><span class="line">    cq_tail_next = next_tail;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (cq_tail_reg == CQ_DEPTH-<span class="number">1</span>) <span class="keyword">begin</span></span><br><span class="line">        write_expected_phase_next = ~write_expected_phase_reg;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">    error_cnt_next = error_cnt_reg + <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这个实现修正了只靠单拍 <code>wrap</code> 组合信号判断 phase 的问题。phase 是队列状态，必须用寄存器跨周期保存。</p>
+<h3 id="7-9-3-CQE-输出给-command-ctl"><a href="#7-9-3-CQE-输出给-command-ctl" class="headerlink" title="7.9.3 CQE 输出给 command_ctl"></a>7.9.3 CQE 输出给 command_ctl</h3><p>CQE 写入后，<code>CQ_lane_ctl</code> 会从 CQ RAM 读出并解析字段：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] fifo_cqe_cid     = cq_queue_data[<span class="number">111</span>:<span class="number">96</span>];</span><br><span class="line"><span class="keyword">wire</span>        fifo_cqe_phase   = cq_queue_data[<span class="number">112</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">7</span>:<span class="number">0</span>]  fifo_cqe_sc      = cq_queue_data[<span class="number">120</span>:<span class="number">113</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">2</span>:<span class="number">0</span>]  fifo_cqe_sct     = cq_queue_data[<span class="number">123</span>:<span class="number">121</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] fifo_cqe_sq_head = cq_queue_data[<span class="number">79</span>:<span class="number">64</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] fifo_cqe_sqid    = cq_queue_data[<span class="number">95</span>:<span class="number">80</span>];</span><br><span class="line"><span class="keyword">wire</span>        fifo_status_ok   = (fifo_cqe_sct == <span class="number">3&#x27;b000</span>) &amp;&amp; (fifo_cqe_sc == <span class="number">8&#x27;h00</span>);</span><br></pre></td></tr></table></figure>
+
+<p>当 <code>cpl_valid &amp;&amp; cpl_ready</code> 成立时，说明该 completion 被后级 command 模块接收：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> cpl_fire = cpl_valid_reg &amp;&amp; cpl_ready;</span><br></pre></td></tr></table></figure>
+
+<p>此时 CQ head 前进，并产生 CQ doorbell：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (cpl_fire) <span class="keyword">begin</span></span><br><span class="line">    cpl_valid_next   = <span class="number">1&#x27;b0</span>;</span><br><span class="line">    cq_sq_valid_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    id_valid_next    = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    id_data_next     = cpl_cid_reg;</span><br><span class="line">    cq_sq_head_next  = cpl_sq_head_reg[SQ_ADDR_W-<span class="number">1</span>:<span class="number">0</span>];</span><br><span class="line"></span><br><span class="line">    cq_head_next = next_head;</span><br><span class="line">    rq_db_trig_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (cq_head_reg == CQ_DEPTH-<span class="number">1</span>) <span class="keyword">begin</span></span><br><span class="line">        rq_cq_head_next     = <span class="number">16&#x27;d0</span>;</span><br><span class="line">        expected_phase_next = ~expected_phase_reg;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">        rq_cq_head_next = &#123;&#123;(<span class="number">16</span>-CQ_ADDR_W)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, cq_head_reg + <span class="number">1&#x27;b1</span>&#125;;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这里有两件事同时发生：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">1. completion 输出给 command_ctl。</span><br><span class="line">2. CQE 里的 SQ Head 回写给对应 SQ lane，用来更新 SQ head。</span><br></pre></td></tr></table></figure>
+
+<p>这正是 NVMe 队列闭环：SQ tail 由 host 写 SQE 推进，SQ head 由 SSD completion 中带回。</p>
+<h2 id="7-10-IO-completion-route-与-SQ-head-回写"><a href="#7-10-IO-completion-route-与-SQ-head-回写" class="headerlink" title="7.10 IO completion route 与 SQ head 回写"></a>7.10 IO completion route 与 SQ head 回写</h2><p>当前 IO completion 使用共享 IOCQ。SSD 写回的 CQE 中包含 <code>SQID</code>，所以 FPGA 可以根据 <code>SQID</code> 判断这条 completion 属于哪一路 IOSQ。</p>
+<p><code>queue_cpl_route.v</code> 负责把 Admin completion 和 IO completion 统一转换成 command_ctl 需要的 completion bus：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cpl_valid[<span class="number">0</span>] = admin_cpl_valid;</span><br><span class="line">cpl_cid[<span class="number">0</span>*ID_WIDTH +: ID_WIDTH] = admin_cpl_cid;</span><br><span class="line">cpl_queue_id[<span class="number">0</span>*QUEUE_ID_WIDTH +: QUEUE_ID_WIDTH] = &#123;QUEUE_ID_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>IO completion 按 SQID route：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; IO_QUEUE_COUNT; i = i + <span class="number">1</span>) <span class="keyword">begin</span></span><br><span class="line">    qid_value = IO_QID_BASE + i;</span><br><span class="line">    cpl_queue_id[(i+<span class="number">1</span>)*QUEUE_ID_WIDTH +: QUEUE_ID_WIDTH] = qid_value;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (io_cpl_sqid[QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] == qid_value) <span class="keyword">begin</span></span><br><span class="line">        io_sqid_hit = <span class="number">1&#x27;b1</span>;</span><br><span class="line"></span><br><span class="line">        <span class="keyword">if</span> (io_queue_enable[i]) <span class="keyword">begin</span></span><br><span class="line">            io_cpl_ready = cpl_ready[i+<span class="number">1</span>];</span><br><span class="line">            cpl_valid[i+<span class="number">1</span>] = io_cpl_valid;</span><br><span class="line">            cpl_cid[(i+<span class="number">1</span>)*ID_WIDTH +: ID_WIDTH] = io_cpl_cid;</span><br><span class="line">            cpl_sqid[(i+<span class="number">1</span>)*<span class="number">16</span> +: <span class="number">16</span>] = io_cpl_sqid;</span><br><span class="line">            cpl_sq_head[(i+<span class="number">1</span>)*<span class="number">16</span> +: <span class="number">16</span>] = io_cpl_sq_head;</span><br><span class="line">            cpl_status_ok[i+<span class="number">1</span>] = io_cpl_status_ok;</span><br><span class="line">        <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">            io_cpl_disabled_queue = io_cpl_valid;</span><br><span class="line">            io_cpl_ready = <span class="number">1&#x27;b1</span>;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>如果 SQID 不在 1~16 范围内，输出 mismatch：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (io_cpl_valid &amp;&amp; !io_sqid_hit) <span class="keyword">begin</span></span><br><span class="line">    io_cpl_sqid_mismatch = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    io_cpl_ready = <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>如果 completion 属于已经不 live 的 queue，则输出 disabled queue：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">io_cpl_disabled_queue = io_cpl_valid;</span><br></pre></td></tr></table></figure>
+
+<p>最终异常事件：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> io_cpl_drop_valid = io_cpl_fire &amp;&amp;</span><br><span class="line">                           (io_cpl_sqid_mismatch || io_cpl_disabled_queue);</span><br></pre></td></tr></table></figure>
+
+<p><code>queue_sq_head_demux.v</code> 负责把 CQE 中的 SQ head 送回对应 IOSQ lane：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">IOCQ cpl_sqid / cpl_sq_head</span><br><span class="line">-&gt; queue_sq_head_demux</span><br><span class="line">-&gt; io_sq_head_valid[n] / io_sq_head_data[n]</span><br><span class="line">-&gt; SQ_lane_ctl.head_ptr_reg</span><br></pre></td></tr></table></figure>
+
+<p>这条链路很重要。如果 SQ head 不回写，SQ lane 会认为队列一直被占用，最终 <code>next_tail == head_ptr_reg</code> 导致 <code>nvme_command_ready</code> 拉低。</p>
+<h2 id="7-11-IOSQ-地址-route"><a href="#7-11-IOSQ-地址-route" class="headerlink" title="7.11 IOSQ 地址 route"></a>7.11 IOSQ 地址 route</h2><p>SSD 读取 IOSQ 时，所有 IOSQ MemRd 请求先进入 <code>nvme_queue_ctl</code> 的 <code>iosq_rx_req_tlp_*</code> 端口，然后由 <code>queue_rx_addr_route.v</code> 按地址分发到 16 个 lane。</p>
+<p>地址 route 的核心逻辑是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; PORTS; i = i + <span class="number">1</span>) <span class="keyword">begin</span></span><br><span class="line">    lane_base  = BASE_ADDR + (STRIDE * i);</span><br><span class="line">    lane_limit = lane_base + WINDOW_SIZE;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (s_is_mem &amp;&amp; (extracted_addr &gt;= lane_base) &amp;&amp;</span><br><span class="line">        (extracted_addr &lt; lane_limit)) <span class="keyword">begin</span></span><br><span class="line">        hit_vec[i] = <span class="number">1&#x27;b1</span>;</span><br><span class="line">        hit_index  = i;</span><br><span class="line">        hit_count  = hit_count + <span class="number">1</span>;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>有效命中还要看该 queue 是否 live：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> raw_route_hit = (hit_count == <span class="number">1</span>);</span><br><span class="line"><span class="keyword">wire</span> enabled_route_hit = raw_route_hit &amp;&amp; port_enable[hit_index];</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> route_hit      = enabled_route_hit;</span><br><span class="line"><span class="keyword">assign</span> route_miss     = s_tlp_valid &amp;&amp; s_tlp_sop &amp;&amp; (hit_count == <span class="number">0</span>);</span><br><span class="line"><span class="keyword">assign</span> route_conflict = s_tlp_valid &amp;&amp; s_tlp_sop &amp;&amp; (hit_count &gt; <span class="number">1</span>);</span><br><span class="line"><span class="keyword">assign</span> route_disabled = s_tlp_valid &amp;&amp; s_tlp_sop &amp;&amp; raw_route_hit &amp;&amp; !port_enable[hit_index];</span><br></pre></td></tr></table></figure>
+
+<p>命中后，TLP 被转发到对应 lane：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> m_tlp_valid[n] = s_tlp_valid &amp;&amp;</span><br><span class="line">                        hit_vec[n] &amp;&amp;</span><br><span class="line">                        port_enable[n] &amp;&amp;</span><br><span class="line">                        !route_conflict;</span><br></pre></td></tr></table></figure>
+
+<p>没有命中、冲突或 disabled 的请求不会卡住上游：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> s_tlp_ready = enabled_route_hit ? m_tlp_ready[hit_index] : <span class="number">1&#x27;b1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>这样设计是为了避免错误地址请求导致 CQ 通路永久 backpressure。错误状态则通过 <code>iosq_rx_route_miss</code>、<code>iosq_rx_route_conflict</code>、<code>iosq_rx_route_disabled</code> 暴露给调试路径。</p>
+<h2 id="7-12-多路-IOSQ-TLP-汇聚"><a href="#7-12-多路-IOSQ-TLP-汇聚" class="headerlink" title="7.12 多路 IOSQ TLP 汇聚"></a>7.12 多路 IOSQ TLP 汇聚</h2><p>16 路 IOSQ lane 可能同时产生 TLP 输出，例如：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">CC：响应 SSD 对 SQE 的 MemRd</span><br><span class="line">RQ RD：预留/兼容 read request path</span><br><span class="line">RQ WR：写 SQ doorbell</span><br></pre></td></tr></table></figure>
+
+<p><code>nvme_queue_ctl.v</code> 使用三组 <code>queue_tlp_rr_arb</code> 汇聚这些输出：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">u_iosq_cpl_rr  <span class="comment">// 多路 IOSQ CC completion 汇聚</span></span><br><span class="line">u_iosq_rd_rr   <span class="comment">// 多路 IOSQ RQ read request 汇聚</span></span><br><span class="line">u_iosq_wr_rr   <span class="comment">// 多路 IOSQ RQ write request 汇聚</span></span><br></pre></td></tr></table></figure>
+
+<p>例如 IOSQ CC completion 汇聚：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">queue_tlp_rr_arb #(</span><br><span class="line">    <span class="variable">.PORTS</span>(IO_QUEUE_COUNT),</span><br><span class="line">    <span class="variable">.DATA_WIDTH</span>(TLP_DATA_WIDTH),</span><br><span class="line">    <span class="variable">.STRB_WIDTH</span>(TLP_STRB_WIDTH),</span><br><span class="line">    <span class="variable">.HDR_WIDTH</span>(SEG_HDR_WIDTH),</span><br><span class="line">    <span class="variable">.SEQ_WIDTH</span>(<span class="number">1</span>),</span><br><span class="line">    <span class="variable">.WEIGHT_ENABLE</span>(<span class="number">1</span>),</span><br><span class="line">    <span class="variable">.WEIGHT_WIDTH</span>(WEIGHT_WIDTH)</span><br><span class="line">) u_iosq_cpl_rr (...);</span><br></pre></td></tr></table></figure>
+
+<p><code>queue_tlp_rr_arb.v</code> 内部使用已有 <code>arbiter</code>，并开启 blocking 模式：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">arbiter #(</span><br><span class="line">    <span class="variable">.PORTS</span>(PORTS),</span><br><span class="line">    <span class="variable">.ARB_TYPE_ROUND_ROBIN</span>(<span class="number">1</span>),</span><br><span class="line">    <span class="variable">.ARB_BLOCK</span>(<span class="number">1</span>),</span><br><span class="line">    <span class="variable">.ARB_BLOCK_ACK</span>(<span class="number">1</span>),</span><br><span class="line">    <span class="variable">.ARB_LSB_HIGH_PRIORITY</span>(<span class="number">1</span>)</span><br><span class="line">) u_rr_arbiter (...);</span><br></pre></td></tr></table></figure>
+
+<p>blocking 的意义是：一个 TLP packet 被选中后，在 <code>eop</code> 之前不会切换到另一路，避免多路 TLP beat 交错。</p>
+<p>加权模式下也有 credit：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">effective_weight = (port_weight[i*WEIGHT_WIDTH +: WEIGHT_WIDTH] == &#123;WEIGHT_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;) ?</span><br><span class="line">                   DEFAULT_WEIGHT :</span><br><span class="line">                   port_weight[i*WEIGHT_WIDTH +: WEIGHT_WIDTH];</span><br></pre></td></tr></table></figure>
+
+<p>当前 <code>nvme_queue_ctl.v</code> 中：</p>
+<table>
+<thead>
+<tr>
+<th>汇聚器</th>
+<th>WEIGHT_ENABLE</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>u_iosq_cpl_rr</code></td>
+<td>1</td>
+<td>多路 CC completion 汇聚，可按 queue weight 调整</td>
+</tr>
+<tr>
+<td><code>u_iosq_rd_rr</code></td>
+<td>0</td>
+<td>RQ read request 汇聚，普通 RR</td>
+</tr>
+<tr>
+<td><code>u_iosq_wr_rr</code></td>
+<td>1</td>
+<td>RQ write request 汇聚，可按 queue weight 调整 doorbell 等写请求</td>
+</tr>
+</tbody></table>
+<h2 id="7-13-Doorbell-聚合"><a href="#7-13-Doorbell-聚合" class="headerlink" title="7.13 Doorbell 聚合"></a>7.13 Doorbell 聚合</h2><p>NVMe doorbell 是写 SSD BAR0 上的 doorbell register。每次 SQ tail 或 CQ head 更新都立即写 doorbell，功能上最直接，但 PCIe posted write 数量会变多。</p>
+<p>当前 <code>SQ_ctl.v</code> 和 <code>queue_CQ_ctl.v</code> 都例化了 <code>queue_doorbell_coalesce.v</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">queue_doorbell_coalesce #(</span><br><span class="line">    <span class="variable">.PTR_WIDTH</span>(<span class="number">16</span>),</span><br><span class="line">    <span class="variable">.QID_WIDTH</span>(<span class="number">8</span>),</span><br><span class="line">    <span class="variable">.ENABLE</span>(DB_COALESCE_ENABLE),</span><br><span class="line">    <span class="variable">.COUNT_THRESHOLD</span>(DB_COALESCE_COUNT_THRESH),</span><br><span class="line">    <span class="variable">.TIME_THRESHOLD</span>(DB_COALESCE_TIME_THRESH)</span><br><span class="line">) u_sq_db_coalesce (...);</span><br></pre></td></tr></table></figure>
+
+<p>聚合模块有两种触发条件：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> count_expired = pending_count_reg &gt;= COUNT_THRESHOLD_SAFE;</span><br><span class="line"><span class="keyword">wire</span> time_expired  = timer_reg &gt;= TIME_THRESHOLD_SAFE;</span><br><span class="line"><span class="keyword">wire</span> can_issue     = pending_valid_reg &amp;&amp;</span><br><span class="line">                     !out_valid_reg &amp;&amp;</span><br><span class="line">                     (count_expired || time_expired);</span><br></pre></td></tr></table></figure>
+
+<p>如果同一个 queue 连续更新多次 tail&#x2F;head，模块会保存最新 ptr：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (in_valid) <span class="keyword">begin</span></span><br><span class="line">    pending_valid_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">    pending_ptr_reg   &lt;= in_ptr;</span><br><span class="line">    pending_qid_reg   &lt;= in_qid;</span><br><span class="line">    ...</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>触发时输出最新的 ptr&#x2F;qid：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (can_issue) <span class="keyword">begin</span></span><br><span class="line">    out_valid_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">    out_ptr_reg   &lt;= pending_ptr_reg;</span><br><span class="line">    out_qid_reg   &lt;= pending_qid_reg;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这意味着聚合不是把每一次 doorbell 都排队发出去，而是合并成“最新 tail&#x2F;head”。这符合 doorbell 的语义：SSD 只需要知道当前最新 tail 或 host 已处理到的最新 head。</p>
+<p>当前默认阈值在 <code>nvme_queue_ctl.v</code> 中为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">SQ count threshold = 4</span><br><span class="line">SQ time threshold  = 32 cycles</span><br><span class="line">CQ count threshold = 8</span><br><span class="line">CQ time threshold  = 64 cycles</span><br></pre></td></tr></table></figure>
+
+<p>高负载时数量阈值会减少 doorbell 写次数；低负载时计时阈值可以避免命令因为一直等数量而迟迟不敲门铃。</p>
+<h2 id="7-14-AXI-Lite-配置与状态回读关系"><a href="#7-14-AXI-Lite-配置与状态回读关系" class="headerlink" title="7.14 AXI-Lite 配置与状态回读关系"></a>7.14 AXI-Lite 配置与状态回读关系</h2><p>AXI-Lite 控制面通过 <code>axi_lite_ctl.v</code> 和 <code>nvme_axil_regs.v</code> 输出队列配置：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [IO_QUEUE_COUNT-<span class="number">1</span>:<span class="number">0</span>]              io_queue_enable;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">1</span>:<span class="number">0</span>]                             io_dispatch_mode;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>]              io_fixed_queue_id;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [IO_QUEUE_COUNT*WEIGHT_WIDTH-<span class="number">1</span>:<span class="number">0</span>] io_queue_weight;</span><br></pre></td></tr></table></figure>
+
+<p>这些信号在 <code>SSD_ctl.v</code> 中接入 <code>nvme_queue_ctl</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.io_queue_enable</span>    (axil_io_queue_enable),</span><br><span class="line"><span class="variable">.io_dispatch_mode</span>   (axil_io_dispatch_mode),</span><br><span class="line"><span class="variable">.io_fixed_queue_id</span>  (axil_io_fixed_queue_id),</span><br><span class="line"><span class="variable">.io_queue_weight</span>    (axil_io_queue_weight),</span><br></pre></td></tr></table></figure>
+
+<p>AXI-Lite 侧还有 live&#x2F;admit 状态回读：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.io_queue_live_enable_status</span>  (io_queue_live_enable),</span><br><span class="line"><span class="variable">.io_queue_admit_enable_status</span> (io_queue_admit_enable),</span><br></pre></td></tr></table></figure>
+
+<p><code>nvme_axil_regs.v</code> 中能看到 queue 配置寄存器和状态寄存器：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">REG_IO_QUEUE_ENABLE_SHADOW: read_mux = &#123;&#123;(<span class="number">32</span>-IO_QUEUE_COUNT)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, io_queue_enable_shadow_reg&#125;;</span><br><span class="line">REG_IO_QUEUE_ENABLE_ACTIVE: read_mux = &#123;&#123;(<span class="number">32</span>-IO_QUEUE_COUNT)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, io_queue_enable_active_reg&#125;;</span><br><span class="line">REG_IO_QUEUE_WEIGHT0:       read_mux = io_queue_weight_shadow_reg[<span class="number">31</span>:<span class="number">0</span>];</span><br><span class="line">REG_QUEUE_STATUS:           read_mux = &#123;io_queue_admit_enable_status, io_queue_live_enable_status&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>复位默认值是所有 IO queue 打开、所有 weight 为 1：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">io_queue_enable_shadow_reg &lt;= &#123;IO_QUEUE_COUNT&#123;<span class="number">1&#x27;b1</span>&#125;&#125;;</span><br><span class="line">io_queue_weight_shadow_reg &lt;= &#123;IO_QUEUE_COUNT&#123;<span class="number">8&#x27;d1</span>&#125;&#125;;</span><br><span class="line">io_queue_enable_active_reg &lt;= &#123;IO_QUEUE_COUNT&#123;<span class="number">1&#x27;b1</span>&#125;&#125;;</span><br><span class="line">io_queue_weight_active_reg &lt;= &#123;IO_QUEUE_COUNT&#123;<span class="number">8&#x27;d1</span>&#125;&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>因此默认上电后 16 路 IO queue 都参与调度。如果需要退化为单队列顺序测试，可以通过 AXI-Lite 只保留 QID1 对应 bit 有效。</p>
+<h2 id="7-15-当前实现需要注意的细节"><a href="#7-15-当前实现需要注意的细节" class="headerlink" title="7.15 当前实现需要注意的细节"></a>7.15 当前实现需要注意的细节</h2><h3 id="7-15-1-队列动态增减是-enable-disable，不是运行时-Create-Delete"><a href="#7-15-1-队列动态增减是-enable-disable，不是运行时-Create-Delete" class="headerlink" title="7.15.1 队列动态增减是 enable&#x2F;disable，不是运行时 Create&#x2F;Delete"></a>7.15.1 队列动态增减是 enable&#x2F;disable，不是运行时 Create&#x2F;Delete</h3><p>当前硬件里 16 路 IOSQ lane 固定存在。AXI-Lite 的 <code>io_queue_enable</code> 控制的是是否接收新命令，以及 lane 是否在 draining 结束后复位。真正 NVMe 协议层面的 Create&#x2F;Delete IO Queue 命令仍然属于初始化&#x2F;管理流程，不是在每次 enable&#x2F;disable 时动态发送。</p>
+<h3 id="7-15-2-IOCQ-是共享队列"><a href="#7-15-2-IOCQ-是共享队列" class="headerlink" title="7.15.2 IOCQ 是共享队列"></a>7.15.2 IOCQ 是共享队列</h3><p>当前结构是 16 路 IOSQ + 1 个共享 IOCQ。IOCQ 通过 CQE 中的 SQID 把 completion route 回对应 command record port。这比每路 IO queue 都做独立 CQ 更省地址和逻辑资源，但要求 <code>queue_cpl_route</code> 和 <code>queue_sq_head_demux</code> 对 SQID 处理正确。</p>
+<h3 id="7-15-3-SQ-head-依赖-CQE-回写"><a href="#7-15-3-SQ-head-依赖-CQE-回写" class="headerlink" title="7.15.3 SQ head 依赖 CQE 回写"></a>7.15.3 SQ head 依赖 CQE 回写</h3><p>SQ lane 的 <code>head_ptr_reg</code> 不是自己随命令写入推进，而是来自 completion 中的 SQ head：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (cq_sq_valid) <span class="keyword">begin</span></span><br><span class="line">    head_ptr_next = cq_sq_head;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>如果 CQE 没回来或 SQ head 没有正确 demux，SQ 会逐步变满，<code>nvme_command_ready</code> 会被拉低。</p>
+<h3 id="7-15-4-phase-必须是寄存器状态"><a href="#7-15-4-phase-必须是寄存器状态" class="headerlink" title="7.15.4 phase 必须是寄存器状态"></a>7.15.4 phase 必须是寄存器状态</h3><p>CQ phase 不是一个单拍组合判断。当前 <code>CQ_lane_ctl.v</code> 使用 <code>write_expected_phase_reg</code> 和 <code>expected_phase_reg</code> 保存队列 wrap 状态，tail&#x2F;head wrap 时分别翻转。这样才能正确区分同一个 CQ 地址上的新旧 CQE。</p>
+<h3 id="7-15-5-doorbell-聚合保存最新-ptr"><a href="#7-15-5-doorbell-聚合保存最新-ptr" class="headerlink" title="7.15.5 doorbell 聚合保存最新 ptr"></a>7.15.5 doorbell 聚合保存最新 ptr</h3><p><code>queue_doorbell_coalesce</code> 聚合的是最新 tail&#x2F;head，而不是保存每一次更新。对 doorbell 来说这是合理的，但调试时会看到 doorbell 写次数少于 SQE&#x2F;CQE 更新次数，这是预期行为。</p>
+<h3 id="7-15-6-queue-weight-为-0-当前不是禁用"><a href="#7-15-6-queue-weight-为-0-当前不是禁用" class="headerlink" title="7.15.6 queue_weight 为 0 当前不是禁用"></a>7.15.6 queue_weight 为 0 当前不是禁用</h3><p><code>queue_cmd_dispatch</code> 和 <code>queue_tlp_rr_arb</code> 中，weight 为 0 会被解释为 <code>DEFAULT_WEIGHT</code>。如果要禁用队列，应该清 <code>io_queue_enable</code>，不要靠 weight&#x3D;0。</p>
+<h3 id="7-15-7-有效地址以-SSD-ctl-参数为准"><a href="#7-15-7-有效地址以-SSD-ctl-参数为准" class="headerlink" title="7.15.7 有效地址以 SSD_ctl 参数为准"></a>7.15.7 有效地址以 SSD_ctl 参数为准</h3><p><code>nvme_queue_ctl.v</code> 内部有默认地址参数，但当前系统中 <code>SSD_ctl.v</code> 会覆盖它们。查看上板地址冲突时，要优先看 <code>SSD_ctl.v</code> 的 <code>ADMIN_SQ_ADDRESS</code>、<code>ADMIN_CQ_ADDRESS</code>、<code>IO_SQ_ADDRESS</code>、<code>IO_CQ_ADDRESS</code> 和 <code>RANGE_SIZE</code>。</p>
+<h2 id="7-16-章节总结"><a href="#7-16-章节总结" class="headerlink" title="7.16 章节总结"></a>7.16 章节总结</h2><p>Queue 模块当前已经形成完整的 NVMe 队列层：</p>
+<ul>
+<li>支持 1 个 ASQ、1 个 ACQ、16 个 IOSQ 和 1 个共享 IOCQ。</li>
+<li>ASQ&#x2F;IOSQ 保存 512-bit SQE，并响应 SSD 对 SQ window 的 MemRd。</li>
+<li>ACQ&#x2F;IOCQ 接收 SSD 写回的 128-bit CQE，并解析 CID、SQID、SQ head、status、phase。</li>
+<li>IO command 支持 Fixed、RR 和 Weighted RR 分发。</li>
+<li>IO queue 支持 enable、live、draining 和 inflight 计数。</li>
+<li>16 路 IOSQ 地址按 base+stride route，避免多个 lane 暴露成顶层大量接口。</li>
+<li>多路 IOSQ TLP 输出通过 RR arbiter 汇聚，packet 内不交错。</li>
+<li>SQ&#x2F;CQ doorbell 支持 count&#x2F;time 双阈值聚合。</li>
+<li>completion 通过 SQID route 回 command_ctl，继续完成 CID 匹配和资源回收。</li>
+</ul>
+<p>从系统角度看，Queue 模块把 NVMe 的“队列在主机内存中，SSD 主动读取 SQE&#x2F;写回 CQE”这一机制硬件化。Command 模块只需要提交 SQE 并等待 completion，PRP&#x2F;Memory 模块只需要响应数据访问，Queue 模块负责把中间的队列存储、doorbell、phase、head&#x2F;tail 和多队列调度处理清楚。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-07-queue-module/" data-id="cmpfi1u190000m0i7fivh2emy" data-title="FPGA NVMe Host 项目记录（七）：Queue 模块设计" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+
+  
     <article id="post-fpga-nvme-host-06-command-module" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
   <div class="article-meta">
     <a href="/2026/05/21/fpga-nvme-host-06-command-module/" class="article-date">
@@ -2825,21 +3392,19 @@
     
     <div class="e-content article-entry" itemprop="articleBody">
       
-        <p>这一篇先记录项目背景、目标和当前工程边界。后面的章节会继续展开 PCIe&#x2F;NVMe 基础、系统架构、Command、Queue、PRP、AXI 数据缓存和上板验证。</p>
-<p><img src="/images/nvme-host/project-closed-loop.svg" alt="FPGA NVMe Host Controller 项目闭环"></p>
+        <p><img src="/images/nvme-host/project-closed-loop.svg" alt="图 1-1 FPGA NVMe Host Controller 项目闭环"></p>
 <h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
-<li><a href="#%E9%A1%B9%E7%9B%AE%E7%9B%AE%E6%A0%87">项目目标</a></li>
-<li><a href="#%E9%A1%B9%E7%9B%AE%E8%83%8C%E6%99%AF">项目背景</a></li>
-<li><a href="#%E8%B0%83%E8%AF%95%E6%8E%A5%E5%8F%A3">调试接口</a></li>
-<li><a href="#%E6%A0%B8%E5%BF%83%E6%A8%A1%E5%9D%97">核心模块</a></li>
-<li><a href="#%E5%BD%93%E5%89%8D%E5%AE%9E%E7%8E%B0%E8%8C%83%E5%9B%B4">当前实现范围</a></li>
+<li><a href="#1-1-%E9%A1%B9%E7%9B%AE%E7%9B%AE%E6%A0%87">1.1 项目目标</a></li>
+<li><a href="#1-2-%E9%A1%B9%E7%9B%AE%E8%83%8C%E6%99%AF">1.2 项目背景</a></li>
+<li><a href="#1-3-%E5%BD%93%E5%89%8D%E5%B7%B2%E7%BB%8F%E5%BD%A2%E6%88%90%E7%9A%84%E6%A0%B8%E5%BF%83%E6%A8%A1%E5%9D%97">1.3 当前已经形成的核心模块</a></li>
+<li><a href="#1-4-%E5%BD%93%E5%89%8D%E5%AE%9E%E7%8E%B0%E8%8C%83%E5%9B%B4">1.4 当前实现范围</a></li>
 </ul>
-<h2 id="项目目标"><a href="#项目目标" class="headerlink" title="项目目标"></a>项目目标</h2><p>这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。</p>
+<h2 id="1-1-项目目标"><a href="#1-1-项目目标" class="headerlink" title="1.1 项目目标"></a>1.1 项目目标</h2><p>这个项目的目标是在 FPGA 内部实现一套轻量级 NVMe over PCIe Host Controller。它不是简单调用 PCIe IP，也不是只做一条 DMA 搬运通路，而是在 Xilinx PCIe Gen3 IP 提供的 AXI-Stream TLP 接口之上，用 RTL 完成 SSD 访问所需的主机侧控制逻辑。</p>
 <p>我这里主要做的事情是：把 Xilinx PCIe Gen3 IP 输出的 AXI-Stream 数据流解析成 TLP header 和 payload，再按照地址、TLP 类型和方向路由到 NVMe 初始化、队列、PRP、数据缓存等模块。不同模块处理完成后，再通过 RQ&#x2F;CC 等通路返回对应的 TLP，或者更新 FPGA 内部的 memory window，从而完成 FPGA 与 SSD 之间的数据交互。</p>
 <p>当前系统围绕一个基本闭环展开：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">FPGA 完成 PCIe 链路建立和 NVMe 初始化</span><br><span class="line">-&gt; 建立 Admin Queue 和 IO Queue</span><br><span class="line">-&gt; 外部通过 AXI-Lite 触发 NVMe Read/Write 命令</span><br><span class="line">-&gt; SSD 通过 PCIe 主动读取 SQE / PRP / 数据，或写回数据和 CQE</span><br><span class="line">-&gt; FPGA 匹配 Completion，回收 CID，输出 done/status</span><br></pre></td></tr></table></figure>
 
-<h2 id="项目背景"><a href="#项目背景" class="headerlink" title="项目背景"></a>项目背景</h2><p>在普通 PC 系统中，NVMe SSD 由 CPU、操作系统和驱动共同管理。PCIe 枚举、NVMe 初始化、队列建立、PRP 地址管理、命令提交和 completion 回收都由软件栈完成。</p>
+<h2 id="1-2-项目背景"><a href="#1-2-项目背景" class="headerlink" title="1.2 项目背景"></a>1.2 项目背景</h2><p>在普通 PC 系统中，NVMe SSD 由 CPU、操作系统和驱动共同管理。PCIe 枚举、NVMe 初始化、队列建立、PRP 地址管理、命令提交和 completion 回收都由软件栈完成。</p>
 <p>对于数据采集、实时缓存和硬件加速这类场景，如果每次 IO 都依赖 CPU 参与，会带来软件调度开销，也会增加系统时延的不确定性。这个项目尝试把 SSD 控制链路的一部分下沉到 FPGA 内部，让 FPGA 作为 PCIe Host&#x2F;Root 侧逻辑直接控制 NVMe SSD。</p>
 <p>项目里 FPGA 负责：</p>
 <ul>
@@ -2850,18 +3415,18 @@
 <li>通过 AXI-Lite 暴露控制寄存器，通过 AXI4 暴露数据缓存窗口。</li>
 </ul>
 <p>这样做的直接意义是：外部采集或计算模块可以先把数据写入 FPGA 侧 AXI4 memory window，再由 FPGA 触发 NVMe Write 写入 SSD；读数据时也可以由 FPGA 触发 NVMe Read，把 SSD 数据读回 AXI4 memory window。对于图像数据、雷达原始数据等连续大带宽数据流，这种结构可以减少 CPU 参与，为后续长时间记录和回放打基础。</p>
-<h2 id="调试接口"><a href="#调试接口" class="headerlink" title="调试接口"></a>调试接口</h2><p>当前工程中几个调试接口的定位如下：</p>
+<p>当前工程中几个调试接口的定位如下：</p>
 <ul>
 <li><code>AXI-Lite</code>：配置寄存器、选择命令来源、触发读写命令、读取状态和错误信息。</li>
 <li><code>AXI4</code>：访问 FPGA 侧数据缓存窗口，测试时由 <code>ssd_rw_test_ctrl</code> 写入或读出 16KB 数据。</li>
 <li><code>VIO</code>：板级调试阶段手动控制测试开始，例如 <code>rw_write_start</code>、<code>rw_write_start_command</code>、<code>rw_read_start_command</code>、<code>rw_read_start</code>。</li>
 <li><code>ILA</code>：观察 PCIe TLP、PRP、CQ route、completion、done pulse 等关键路径。</li>
 </ul>
-<h2 id="核心模块"><a href="#核心模块" class="headerlink" title="核心模块"></a>核心模块</h2><p>当前工程中，SSD 控制器不是一个大状态机，而是拆成几条相对清晰的数据面：</p>
+<h2 id="1-3-当前已经形成的核心模块"><a href="#1-3-当前已经形成的核心模块" class="headerlink" title="1.3 当前已经形成的核心模块"></a>1.3 当前已经形成的核心模块</h2><p>当前工程中，SSD 控制器不是一个大状态机，而是拆成几条相对清晰的数据面：</p>
 <figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">pcie_us</span><br><span class="line">    Xilinx PCIe IP + AXI-Stream RQ/RC/CQ/CC 适配</span><br><span class="line"></span><br><span class="line">SSD_ctl</span><br><span class="line">    主 NVMe host control 顶层</span><br><span class="line"></span><br><span class="line">axi_lite_ctl</span><br><span class="line">    AXI-Lite 寄存器、命令来源选择、状态回读</span><br><span class="line"></span><br><span class="line">prp_ctl</span><br><span class="line">    PRP1/PRP2 计算、PRP list 上下文维护、PRP list CplD 返回</span><br><span class="line"></span><br><span class="line">command_ctl</span><br><span class="line">    CID 池、命令构造、command_record、completion 匹配、错误/超时统计</span><br><span class="line"></span><br><span class="line">nvme_queue_ctl</span><br><span class="line">    ASQ/ACQ/IOSQ/IOCQ 队列逻辑、doorbell、CQE 接收、队列调度</span><br><span class="line"></span><br><span class="line">pcie_memory_clt_top</span><br><span class="line">    外侧 AXI 写入与读出、SSD 数据写入与读出、AXI 与 TLP 转接桥</span><br><span class="line"></span><br><span class="line">SSD_pcie_us</span><br><span class="line">    RQ round-robin + CQ route + CC round-robin</span><br></pre></td></tr></table></figure>
 
 <p>这种拆分方便逐个模块验证。command、queue、PRP、memory 和 PCIe TLP route 可以先做单模块仿真，再逐步接成小闭环和完整闭环。</p>
-<h2 id="当前实现范围"><a href="#当前实现范围" class="headerlink" title="当前实现范围"></a>当前实现范围</h2><p>当前已经实现和验证过的内容包括：</p>
+<h2 id="1-4-当前实现范围"><a href="#1-4-当前实现范围" class="headerlink" title="1.4 当前实现范围"></a>1.4 当前实现范围</h2><p>当前已经实现和验证过的内容包括：</p>
 <ul>
 <li>PCIe 链路与 NVMe 初始化流程。</li>
 <li>Admin Queue 和 IO Queue 建立。</li>
@@ -3296,6 +3861,10 @@
       <ul>
         
           <li>
+            <a href="/2026/05/21/fpga-nvme-host-07-queue-module/">FPGA NVMe Host 项目记录（七）：Queue 模块设计</a>
+          </li>
+        
+          <li>
             <a href="/2026/05/21/fpga-nvme-host-06-command-module/">FPGA NVMe Host 项目记录（六）：Command 模块设计</a>
           </li>
         
@@ -3309,10 +3878,6 @@
         
           <li>
             <a href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/">FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流</a>
-          </li>
-        
-          <li>
-            <a href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
           </li>
         
       </ul>
