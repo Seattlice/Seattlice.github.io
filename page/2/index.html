@@ -78,6 +78,302 @@
       <div class="outer">
         <section id="main">
   
+    <article id="post-board-debugging" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/01/20/board-debugging/" class="article-date">
+  <time class="dt-published" datetime="2026-01-20T02:23:31.000Z" itemprop="datePublished">2026-01-20</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="p-name article-title" href="/2026/01/20/board-debugging/">上板调试</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <h2 id="枚举模块"><a href="#枚举模块" class="headerlink" title="枚举模块"></a>枚举模块</h2><h3 id="2026-01-20"><a href="#2026-01-20" class="headerlink" title="2026&#x2F;01&#x2F;20"></a>2026&#x2F;01&#x2F;20</h3><p>给扩展板卡上电，通过金手指进行供电，之后通过IP进行连接，连接结果如下：</p>
+<p><img src="/images/notion/board-debugging/image-01.png" alt="image 1"></p>
+<p>看见物理层训练结果肯定是没有训练完成，寻找原因，大概从时钟，配置方面，找到在IP配置上的原因，原文在BANK227中位于X0Y2和X0Y1，我这里选用的Y1，选用Y2之后再进行尝试，链路成功训练完成，linkup拉高，可以进行下一步</p>
+<p><img src="/images/notion/board-debugging/image-02.png" alt="image 2"></p>
+<h3 id="枚举验证"><a href="#枚举验证" class="headerlink" title="枚举验证"></a>枚举验证</h3><p>枚举没有通过，状态显示停留在02，也就是等待ID回复，通过ILA查看，看见发送了RQ信号，RC也进行了接收，RC的KEEP是07，数据也明显不对，RQ数据看起来应该是对的，但是USER数据明显不对，查看发现是USER数据是大小端不一样的，我以为是小端，实则是大端，更改顺序继续抓取数据。</p>
+<p><img src="/images/notion/board-debugging/image-03.png" alt="image 3"></p>
+<p><img src="/images/notion/board-debugging/image-04.png" alt="image 4"></p>
+<p>从{DW3210}更改为{DW0123}</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> tlp_hdr_config = &#123;</span><br><span class="line">        <span class="comment">// DW 0 (Type + Length)</span></span><br><span class="line">        tlp_fmt_type[<span class="number">7</span>:<span class="number">5</span>],                                      <span class="comment">// Fmt</span></span><br><span class="line">        tlp_fmt_type[<span class="number">4</span>:<span class="number">0</span>],                                      <span class="comment">// Type</span></span><br><span class="line">        <span class="number">1&#x27;b0</span>, TLP_TC,                                           <span class="comment">// R, TC</span></span><br><span class="line">        <span class="number">1&#x27;b0</span>, TLP_Attr[<span class="number">2</span>],                                      <span class="comment">// R, Attr</span></span><br><span class="line">        <span class="number">1&#x27;b0</span>, <span class="number">1&#x27;b0</span>, <span class="number">1&#x27;b0</span>,                                       <span class="comment">// R, TH, TD</span></span><br><span class="line">        <span class="number">1&#x27;b0</span>, TLP_Attr[<span class="number">1</span>:<span class="number">0</span>],                                    <span class="comment">// EP, Attr</span></span><br><span class="line">        TLP_At,                                                 <span class="comment">// AT</span></span><br><span class="line">        tlp_length,                                              <span class="comment">// Length (10 bit)</span></span><br><span class="line">    </span><br><span class="line">        <span class="comment">// DW 1 (ReqID + Tag + BE)</span></span><br><span class="line">        TLP_REQ_ID,                                             <span class="comment">// Requester ID</span></span><br><span class="line">        tlp_tag,                                                <span class="comment">// Tag</span></span><br><span class="line">        tlp_last_be,                                            <span class="comment">// Last BE</span></span><br><span class="line">        tlp_first_be,                                           <span class="comment">// First BE    </span></span><br><span class="line">    </span><br><span class="line">        <span class="comment">// DW 2 (Address / BDF)</span></span><br><span class="line">        TLP_TARGET_BDF[<span class="number">15</span>:<span class="number">8</span>],                                   <span class="comment">// Bus</span></span><br><span class="line">        TLP_TARGET_BDF[<span class="number">7</span>:<span class="number">3</span>],                                    <span class="comment">// Dev</span></span><br><span class="line">        TLP_TARGET_BDF[<span class="number">2</span>:<span class="number">0</span>],                                    <span class="comment">// Func</span></span><br><span class="line">        <span class="number">4&#x27;b0000</span>,                                                <span class="comment">// Reserved</span></span><br><span class="line">        tlp_address[<span class="number">11</span>:<span class="number">2</span>],                                      <span class="comment">// Reg Index (DW aligned)</span></span><br><span class="line">        <span class="number">2&#x27;b00</span>,                                                  <span class="comment">// Reserved    </span></span><br><span class="line">    </span><br><span class="line">        <span class="comment">// DW 3 (Padding for alignment)</span></span><br><span class="line">        <span class="number">32&#x27;d0</span></span><br><span class="line">    &#125;;</span><br></pre></td></tr></table></figure>
+
+<p>现象：更改之后RQ有变化，但是RC抓不到数据</p>
+<p>TUSER看着没什么问题，抓一下DATA看看，更改之后还是不对</p>
+<p><img src="/images/notion/board-debugging/image-05.png" alt="image 5"></p>
+<p>DATA如下：</p>
+<p><img src="/images/notion/board-debugging/image-06.png" alt="image 6"></p>
+<p><code>**0000000000000000000000000000000000000001000040010100000000000000**</code></p>
+<p>现在的结果是：</p>
+<p><img src="/images/notion/board-debugging/image-07.png" alt="image 7"></p>
+<p>rc_data : 00000000000000000000000000000000a808144d000000010000000140040000</p>
+<p>tuser : 7fff9f718010000f000</p>
+<p>tkeep:0f</p>
+<p>现在的结果是抓到了ID号，说明发送出去的数据是正确的，但是RC的CPL只是通过IP的数据流返回了，并没有返回到我的端口中来，说明端口处数据流有地方有问题，需要再次抓取解决</p>
+<p>原来是开启了那个拼接模式，当包小的时候就开启，现在关闭拼接模式即可：</p>
+<p><img src="/images/notion/board-debugging/image-08.png" alt="image 8"></p>
+<p>抓取到的ID如下：a808144d</p>
+<p>现在表明最起码的硬盘ID通路，说明可以和硬盘进行正常沟通了，接下来按照枚举的操作进行枚举即可。</p>
+<p>读到了地址的掩码：</p>
+<p><img src="/images/notion/board-debugging/image-09.png" alt="image 9"></p>
+<p>这里的BAR0变成了1ffc004</p>
+<p><img src="/images/notion/board-debugging/image-10.png" alt="image 10"></p>
+<p>原来是ILA位宽不够了，增加位宽继续查看，没什么问题</p>
+<p>为了进一步排查原因，现在增加一个回读command状态机进行查看，</p>
+<p>现在应该是枚举成功，没有什么额外的问题了。</p>
+<p><img src="/images/notion/board-debugging/image-11.png" alt="image 11"></p>
+<p>可以看见寄存器都有值</p>
+<p><img src="/images/notion/board-debugging/image-12.png" alt="image 12"></p>
+<p>枚举模块成功，接下来是NVME初始化模块</p>
+<h2 id="NVME初始化"><a href="#NVME初始化" class="headerlink" title="NVME初始化"></a>NVME初始化</h2><p>卡在了状态2不动了，抓取信号看见是有信号进来的</p>
+<p><img src="/images/notion/board-debugging/image-13.png" alt="image 13"></p>
+<p>状态机不动说明跳转有问题，返回查看跳转条件，可能是tag的问题，抓取tag用来查看tag的最终结果，原来是这里忘记改大小端了，改为[47:40]即可。</p>
+<p><img src="/images/notion/board-debugging/image-14.png" alt="image 14"></p>
+<p>更改之后进行查看，果然成功了</p>
+<p><img src="/images/notion/board-debugging/image-15.png" alt="image 15"></p>
+<p><img src="/images/notion/board-debugging/image-16.png" alt="image 16"></p>
+<p>现在枚举和初始化都成功了，接下来就是队列的初始化和队列读写了</p>
+<p><img src="/images/notion/board-debugging/image-17.png" alt="image 17"></p>
+<h2 id="IO队列初始化"><a href="#IO队列初始化" class="headerlink" title="IO队列初始化"></a>IO队列初始化</h2><p>队列初始化主要是抓取命令和ID，发送RQ队列，接收CQ命令，发送CC命令</p>
+<h3 id="RQ调试"><a href="#RQ调试" class="headerlink" title="RQ调试"></a>RQ调试</h3><p>首先利用ASQ&#x2F;ACQ队列初始化IOSQ和IOCQ，首先观测ASQ的操作，发送RQ命令，接收CQ命令。发送CC结果，现在是RQ命令，发现valid信号拉高但是ready信号一直不拉高。因此需要进行查看ready信号的链路</p>
+<p><img src="/images/notion/board-debugging/image-18.png" alt="image 18"></p>
+<p>roundrobin模块正常输出</p>
+<p><img src="/images/notion/board-debugging/image-19.png" alt="image 19"></p>
+<p>仲裁模块正常输出</p>
+<p><img src="/images/notion/board-debugging/image-20.png" alt="image 20"></p>
+<p>可能是卡在了组TLP包的模块上，对该模块需要复查，继续添加ILA查看。</p>
+<p>runme.log一直报错Abnormal program termination (EXCEPTION_ACCESS_VIOLATION)，这个问题很奇怪，搜索出来是内存溢出，但是工作机64G内存也能干溢出？我觉得不太科学，之前和之后的改动是在改变了一些握手信号的逻辑和ILA，很可能是这些方面导致的，在一个网页上也看见了这个错误，必须进行更改，在删减掉所有ILA之后，这个错误没有了，说明就是ILA产生的错误，综合终于成功了，现在对ILA一个一个加入观测到底是哪里的问题。</p>
+<p><img src="/images/notion/board-debugging/image-21.png" alt="image 21"></p>
+<p>没找到哪里出问题了。。把所有ila去掉再综合就成功了，之后再加上ila就又可以了，这个问题非常奇怪，没有任何一个寄存器是不能抓取的。</p>
+<p>现在是RQ发送过去了，但是CQ却没有来读取数据的？很奇怪啊</p>
+<p><img src="/images/notion/board-debugging/image-22.png" alt="image 22"></p>
+<p>RQ发送的数据为0000000000000000000000000000000100000000000008010000000010001000</p>
+<p>keep为1F，tuser为00000000000000f。</p>
+<p>这个数据很可能有问题，写门铃CQ有问题，问题大概在写门铃的地址上，不然不可能不回复，很可能是写地址看成了CQ队列的地址了</p>
+<p>原来是写门铃地址是固定的，不是随着队列深度变化的，这里我理解的有问题，更改了地址之后进行数据抓取。</p>
+<h3 id="CQ调试"><a href="#CQ调试" class="headerlink" title="CQ调试"></a>CQ调试</h3><p>抓到了CQ的端口数据：</p>
+<p><img src="/images/notion/board-debugging/image-23.png" alt="image 23"></p>
+<p>cq_data:0000000000000000000000000000000000070000000000100000000020000000</p>
+<p>cq_tuser:1ffff7dee00100000000ff</p>
+<p>cq_tkeep:0f</p>
+<p>继续深入抓取数据：</p>
+<p><img src="/images/notion/board-debugging/image-24.png" alt="image 24"></p>
+<ul>
+<li><p><code>**cpl_fmt**</code>** &#x3D; 1 (<strong><code>**3&#39;b001**</code></strong>)**</p>
+<ul>
+<li><strong>含义</strong>：<strong>3DW Header, No Data</strong>。</li>
+<li>这表示这是一个不带数据的请求（也就是读请求），且使用 32 位地址。</li>
+</ul>
+</li>
+<li><p><code>**cpl_type**</code>** &#x3D; 0 (<strong><code>**5&#39;b00000**</code></strong>)**</p>
+<ul>
+<li><strong>含义</strong>：<strong>Memory Read &#x2F; Write</strong>。</li>
+<li>结合 <code>fmt=1</code> (No Data)，这确定无疑是一个 <strong>Memory Read (内存读请求)</strong>。</li>
+</ul>
+</li>
+<li><p><code>**cpl_lowaddress**</code>** &#x3D; <strong><code>**20000000**</code></strong> (Hex)**</p>
+<ul>
+<li><strong>含义</strong>：读取的目标地址。</li>
+<li><strong>分析</strong>：这正是你之前配置的 <strong>Admin SQ Base Address (</strong><code>**32&#39;h2000_0000**</code><strong>)</strong>。</li>
+<li><strong>结论</strong>：SSD 正在准确地访问你分配给它的队列内存。</li>
+</ul>
+</li>
+<li><p><code>**cpl_length**</code>** &#x3D; <strong><code>**010**</code></strong> (Hex)**</p>
+<ul>
+<li><p><strong>含义</strong>：请求读取的数据长度（单位是 Dword &#x2F; 4字节）。</p>
+</li>
+<li><p><strong>换算</strong>：Hex <code>010</code> &#x3D; Decimal 16。</p>
+</li>
+<li><p><strong>字节数</strong>：16×4 Bytes&#x3D;64 Bytes。<br>16×4 Bytes&#x3D;64 Bytes16 \times 4 \text{ Bytes} &#x3D; \mathbf{64 \text{ Bytes}}</p>
+</li>
+<li><p><strong>结论</strong>：<strong>64 字节正是 NVMe 一条命令的标准长度！</strong></p>
+</li>
+</ul>
+</li>
+</ul>
+<h3 id="RC调试"><a href="#RC调试" class="headerlink" title="RC调试"></a>RC调试</h3><p>目前看RQ,RC都是正常的指令，现在进入到RC，一直在端口没有抓取到RC的发出命令，可能是RC模块有问题，经排查，原来是自己把sys_clk写成了user_clk，晕，这么简单的错误。</p>
+<h3 id="CC调试"><a href="#CC调试" class="headerlink" title="CC调试"></a>CC调试</h3><p>ILA抓取CC端口，输出发现没有ready信号，由此没有到CC口，必须寻找该信号来源</p>
+<p><img src="/images/notion/board-debugging/image-25.png" alt="image 25"></p>
+<p>找到最后的原因了，是因为是中原写错了，下次不能再犯这种错误了，之后CC口发送成功</p>
+<p><img src="/images/notion/board-debugging/image-26.png" alt="image 26"></p>
+<h3 id="CQ端口—CQE命令"><a href="#CQ端口—CQE命令" class="headerlink" title="CQ端口—CQE命令"></a>CQ端口—CQE命令</h3><p>接下来就只能看CQE命令，也就是CQ端口的内容了，看CQlane中是抓取不到的，因此该命令没有分发到CQE中，说明要么是CC命令有问题，要么是地址分发有问题，对二者分别进行查看，</p>
+<p>CQlane中没有收到CQ的命令，说明是地址分发有问题，对地址分发进行查看，发现地址分发没有数据，说明前面有问题，要么是CC命令有问题，要么是CQ端口接收有问题，但是又出现了刚才的问题，综合报错，将ILA注释无果，于是认真按照警告进行更改，终于知道了原来是位宽不匹配报错</p>
+<p>一直查询结果无果，现在从每一个端口进行查找，发现是CC端口TLP包头没有数据，一直是0，源头查找到TLP包头，发现是忘记声明位宽了，现在赋值位宽即可。</p>
+<p><img src="/images/notion/board-debugging/image-27.png" alt="image 27"></p>
+<p>现在CC端口发骚那个成功了。得到CQ端口回应的CQE数据如下：</p>
+<p><img src="/images/notion/board-debugging/image-28.png" alt="image 28"></p>
+<p>ACQ_rx_req_tlp_hdr_reg[127:0]：</p>
+<p>60000004000000ff0000000020001000</p>
+<p>ACQ_rx_req_tlp_data_reg[255:0]：0007000000000010000000002000000040170000000000010000000000000000</p>
+<p>解析如下：</p>
+<ul>
+<li><p>**DW0: **<code>**60000004**</code></p>
+<ul>
+<li><code>Fmt</code> &#x3D; <code>011</code> (4DW 头，<strong>带数据</strong>)</li>
+<li><code>Type</code> &#x3D; <code>00000</code> (<strong>Memory Write</strong>)</li>
+<li><code>Length</code> &#x3D; <code>0x004</code> (<strong>4 个 DWord &#x3D; 16 字节</strong>)</li>
+<li><strong>含义：SSD 发起了一个 DMA 内存写操作，写入长度恰好是 16 字节（标准的 1 个 NVMe CQE 大小）。</strong></li>
+</ul>
+</li>
+<li><p>**DW1: **<code>**000000ff**</code></p>
+<ul>
+<li><code>Requester ID</code> &#x3D; <code>0x0000</code> (SSD 控制器本身的 ID)</li>
+<li><code>First BE</code> &#x2F; <code>Last BE</code> &#x3D; <code>f</code> &#x2F; <code>f</code> (4个DWord全部有效)</li>
+</ul>
+</li>
+<li><p>**DW2: **<code>**00000000**</code> (64位物理地址的高 32 位)</p>
+</li>
+<li><p>**DW3: **<code>**20001000**</code> (64位物理地址的低 32 位)</p>
+<ul>
+<li><strong>含义：SSD 精准地将回信写到了你指定的 <strong><code>**ADMIN_CQ_ADDRESS**</code></strong> (</strong><code>**0x20001000**</code><strong>) 处！</strong></li>
+</ul>
+</li>
+</ul>
+<ol start="2">
+<li>解析 TLP Data (NVMe 完成包 CQE)</li>
+</ol>
+<p><code>**ACQ_rx_req_tlp_data_reg = [垃圾数据] 40170000 00000001 00000000 00000000**</code></p>
+<p>因为 Length 是 4 DW，所以 256-bit 总线上只有低 128-bit (最右边的 4 个 DWord) 是有效的 CQE 数据。我们按小端序（右边是 DW0）拆解：</p>
+<ul>
+<li>**DW0: **<code>**00000000**</code> (Command Specific，通常为 0)</li>
+<li>**DW1: **<code>**00000000**</code> (Reserved)</li>
+<li>**DW2: **<code>**00000001**</code> (<strong>SQ Head Pointer &amp; SQ Identifier</strong>)<ul>
+<li><code>SQ Identifier</code> &#x3D; <code>0</code> (这是 Admin SQ)</li>
+<li><code>SQ Head Pointer</code> [15:0] &#x3D; <code>1</code></li>
+<li><strong>含义：SSD 告诉你：“Admin 队列里索引为 0 的那个命令，我已经取走并执行完了，现在我的 Head 指针移动到 1 了。”</strong></li>
+</ul>
+</li>
+</ul>
+<p>最关键的 DW3: <code>40170000</code> (状态与结果)</p>
+<p>这个词包含了命令的执行结果，我们将 <code>4017</code>（高16位）转为二进制：<br><code>0100_0000_0001_0111</code></p>
+<p>根据 NVMe 协议对应位段：</p>
+<ul>
+<li><code>**CID**</code>** (Command ID) [15:0]**: <code>0000</code> (回应你 CID&#x3D;0 的那条命令)</li>
+<li><code>**P**</code>** (Phase Tag) [16]<strong>: <code>1</code> (这是最低位的 <code>1</code>。代表这个 CQE 是</strong>最新有效**的！)</li>
+<li><code>**SC**</code>** (Status Code)**: <code>00001011</code> &#x3D; 11 &#x3D; <code>**0x0B**</code></li>
+<li><code>**SCT**</code>** (Status Code Type)**: <code>000</code> (Generic Command Status)</li>
+<li><code>**M**</code>** (More Bit) [30]**: <code>1</code> (表示有更多的错误日志可以读取)</li>
+</ul>
+<p><strong>结论：SSD 拒绝了你的命令，报错代码是 Generic Status <strong><code>**0x0B**</code></strong>。</strong></p>
+<p>经过更改之后的CQE已经正确了：</p>
+<p>hdr:60000004000000ff0000000020001000</p>
+<p>data:0007000000000010000000002000000000010000000000010000000000000000</p>
+<p>但是CQ队列没有收到VALID，说明前一级出问题了。还得去看看，果然是大端小端的问题，现在问题解决了，队列初始化已经完成：</p>
+<p><img src="/images/notion/board-debugging/image-29.png" alt="image 29"></p>
+<h2 id="IO队列传输数据"><a href="#IO队列传输数据" class="headerlink" title="IO队列传输数据"></a>IO队列传输数据</h2><p>现在IO队列开始之后利用刚才的程序，CQ队列是没有反应的，因此需要先看IOSQ队列是否有问题，因此抓取RQ,CQ的端口，看写门铃和都回的操作是否有问题。</p>
+<p>IO队列实行后抓取到一个很诧异地情况，就是CQE回到的ACQ中，而且数据是0007ffff000000020000000000000000，这说明门铃写错了，一看果然是门铃有问题，</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">//Doorbell?Address=BAR0_Base_Addr+0x1000+(QID×2×4)+(Type×4) TYPE:SQ 0 CQ 1</span></span><br><span class="line">    <span class="comment">// tlp_low_mem_adress = BAR0_BASE_ADDR + 16&#x27;h1000 + QUEUE_TYPE &lt;&lt; 3 ;                   // ID Register</span></span><br><span class="line">    tlp_low_mem_adress = BAR0_BASE_ADDR + <span class="number">16&#x27;h1000</span> ;                   <span class="comment">// ID Register</span></span><br></pre></td></tr></table></figure>
+
+<p>修改了这个问题之后还是IOSQ没有收到东西，继续查询觉得可能是数据有问题：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] tlp_addr = rx_req_tlp_hdr[<span class="number">95</span>:<span class="number">64</span>];</span><br></pre></td></tr></table></figure>
+
+<p>强制绑定了地址，而且不管3DW，还是4DW，低位才是最后的地址才对，所以这里出错了，必须得到修正。</p>
+<p>而且经过仿真与查询，TLP的BYTECOUNT是十一位宽的数据，但是如果一次性传4096就会造成错误，因此必须在内部赋值为12位宽，然后外侧改为11位宽才是正确的做法，这样做可以得到正确的仿真结果，每一次传输128字节数据</p>
+<p><img src="/images/notion/board-debugging/image-30.png" alt="image 30"></p>
+<p>对于这个模块，还需要优化的地方如下：</p>
+<ol>
+<li>所有的读取请求地址，<strong>必须是 32 字节（256-bit）对齐的</strong>（即地址的最低 5 位永远是 <code>00000</code>）。</li>
+<li>所有的单次读取请求长度，<strong>不要跨越 4KB 边界</strong>。</li>
+</ol>
+<h3 id="RQ写SQ队列门铃"><a href="#RQ写SQ队列门铃" class="headerlink" title="RQ写SQ队列门铃"></a>RQ写SQ队列门铃</h3><p><img src="/images/notion/board-debugging/image-31.png" alt="image 31"></p>
+<p>hdr:400000010000000f000000001000100</p>
+<h3 id="CQ口接受的数据"><a href="#CQ口接受的数据" class="headerlink" title="CQ口接受的数据"></a>CQ口接受的数据</h3><p><img src="/images/notion/board-debugging/image-32.png" alt="image 32"></p>
+<h3 id="CC口发送的数据"><a href="#CC口发送的数据" class="headerlink" title="CC口发送的数据"></a>CC口发送的数据</h3><p>现在CC口发送NVME命令成功了，但是CQ队列没有收到回复，因此查看这里是否有错误。</p>
+<p>hdr:4a000010000000400000000000000000</p>
+<p>data1:0000000030002000000000000000000000000000000000000000000100020001</p>
+<p>data2:0000000000000000000000000000000000000000000000640000000000000000</p>
+<p><img src="/images/notion/board-debugging/image-33.png" alt="image 33"></p>
+<h3 id="找到SSD给CQ口的数据"><a href="#找到SSD给CQ口的数据" class="headerlink" title="找到SSD给CQ口的数据"></a>找到SSD给CQ口的数据</h3><p><img src="/images/notion/board-debugging/image-34.png" alt="image 34"></p>
+<p>这里的ready好像没有拉起来，观察数据内容</p>
+<p>hdr:20000020000000ff0000000030002000</p>
+<p>data：0007000100000020000000003000208000000000000000000000000000000000</p>
+<p>这里有一个reg，大位宽的寄存器注意是打了一拍的，和1位的延迟一周期，仿真也没什么问题，这就很奇怪了，rd_memory里面的内容cc_tx都抓取不到，但是CQroute能抓进入rd_memory的内容，很奇怪，为什么没有输出呢？怀疑是地址有问题，但是地址是通过参数传递进去的，于是重新抓取rd_memory的进入hdr看看是否能抓取到相关内容</p>
+<p><img src="/images/notion/board-debugging/image-35.png" alt="image 35"></p>
+<p>这里能看见rd_memory传入了正常的数据，但是其他都是0，没有正常进行检测，很奇怪啊这个问题</p>
+<p><img src="/images/notion/board-debugging/image-36.png" alt="image 36"></p>
+<p>hdr是打了一拍的，值为20000020000000ff0000000030002000</p>
+<p>我懂了，因为下游是仲裁器，必须等valid拉高来检测总线上是否有数据正在传输，所以上游得等待，而这逻辑又是必须等待下游ready拉高才进行的，这里是错误的。</p>
+<p>“A transmitter is not permitted to wait until TREADY is asserted before asserting TVALID.”</p>
+<p>valid不能等待ready信号，我这写错了。</p>
+<p>重新调整了一下并写了一个仿真如下：</p>
+<p>能够正常工作</p>
+<p><img src="/images/notion/board-debugging/image-37.png" alt="image 37"></p>
+<p>现在数据是发送了，但是一直在发送，没有停止的意思，肯定是哪个地方搞错了，这个最下面的valid一直为1，需要进行查证为什么一直为1</p>
+<p><img src="/images/notion/board-debugging/image-38.png" alt="image 38"></p>
+<p>原来是CC包封装反了，修改之后又有一个问题，为什么只能分128B来发，查询之后的来是协商的结果，虽然在硬核中设置了512B，但是因为硬件限制，只能协商到128B，但是我硬核设置为512B，并且SSD的寄存器也设置为51B的，这就很奇怪</p>
+<p><img src="/images/notion/board-debugging/image-39.png" alt="image 39"></p>
+<p>这里终于通过CC口发送出去了，但是cq口没有CQE回来，是个问题</p>
+<p><img src="/images/notion/board-debugging/image-40.png" alt="image 40"></p>
+<p>这里终于正确了</p>
+<p><img src="/images/notion/board-debugging/image-41.png" alt="image 41"></p>
+<h3 id="CC口数据抓取"><a href="#CC口数据抓取" class="headerlink" title="CC口数据抓取"></a>CC口数据抓取</h3><p><img src="/images/notion/board-debugging/image-42.png" alt="image 42"></p>
+<p>HDR：4a000020000000800000000000000000</p>
+<p>4a000020000000800000000000000100</p>
+<p>4a000020000000800000000000000200</p>
+<p>4a000020000000800000000000000300</p>
+<p>RQ：20000020000003ff0000000030002180</p>
+<p>仍然没收到回复，改变CPLD的头为这样再次进行常识：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> tlp_cpld = &#123;</span><br><span class="line">        <span class="comment">// DW 0 (Type + Length)</span></span><br><span class="line">        tlp_fmt_type[<span class="number">7</span>:<span class="number">5</span>],                                      <span class="comment">// Fmt</span></span><br><span class="line">        tlp_fmt_type[<span class="number">4</span>:<span class="number">0</span>],                                      <span class="comment">// Type</span></span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*R*/</span>, <span class="number">3&#x27;b000</span> <span class="comment">/*TC*/</span>, </span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*R*/</span>, <span class="number">1&#x27;b0</span> <span class="comment">/*Attr2*/</span>, </span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*R*/</span>, <span class="number">1&#x27;b0</span> <span class="comment">/*TH*/</span>, <span class="number">1&#x27;b0</span> <span class="comment">/*TD*/</span>, </span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*EP*/</span>, <span class="number">2&#x27;b00</span> <span class="comment">/*Attr1:0*/</span>, </span><br><span class="line">        <span class="number">2&#x27;b00</span> <span class="comment">/*AT*/</span>, </span><br><span class="line">        tlp_length,</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">        <span class="comment">// DW 1 (ReqID + Tag + BE)</span></span><br><span class="line">        cpld_completer_ID,                                      <span class="comment">// cpld_completer_ID</span></span><br><span class="line">        <span class="number">3&#x27;b000</span> <span class="comment">/*Status:Success*/</span>,                              <span class="comment">// cpld_status</span></span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*BCM*/</span>,                                           <span class="comment">// BCM</span></span><br><span class="line">        cpld_byte_count,             <span class="comment">// cpld_byte_count</span></span><br><span class="line"></span><br><span class="line">        <span class="comment">// DW 2 (Address / BDF)</span></span><br><span class="line">        cpld_requester_ID,                                      <span class="comment">//cpld_requester_ID</span></span><br><span class="line">        cpld_tag,                                               <span class="comment">//cpld_tag</span></span><br><span class="line">        <span class="number">1&#x27;d0</span>,                                                   <span class="comment">// Reserved</span></span><br><span class="line">        cpld_lower_adress,                                      <span class="comment">//cpld_lower_adress</span></span><br><span class="line"></span><br><span class="line">        <span class="comment">// DW 3 (Padding for alignment)</span></span><br><span class="line">        <span class="number">32&#x27;d0</span></span><br><span class="line">    &#125;;</span><br></pre></td></tr></table></figure>
+
+<p>怀疑是3DW和4DW的区别，将DW2和DW3调换位置继续尝试，但是这次发送的CC口的HDR居然没有tag出现，这很诡异，不知道为什么，四个包每个包都是：</p>
+<p>4a000020000000800000000000000000</p>
+<p>而请求的包是：这是正确的，tag和地址均在变化</p>
+<p>20000020000000ff0000000030002000</p>
+<p>20000020000001ff0000000030002080</p>
+<p>20000020000002ff0000000030002100</p>
+<p>20000020000003ff0000000030002180</p>
+<p>怀疑是布线问题，重新布线再次生成进行尝试。</p>
+<p>现在生成的结果：</p>
+<p>4a000020000000800000000000000000</p>
+<p>4a000020000000800000010000000000</p>
+<p>4a000020000000800000020000000000</p>
+<p>4a000020000000800000030000000000</p>
+<p>仍然没有CQE命令回来</p>
+<p><img src="/images/notion/board-debugging/image-43.png" alt="image 43"></p>
+<p>4a000020010000800000000000000000</p>
+<p>4a000020010000800000010000000000</p>
+<p>4a000020010000800000020000000000</p>
+<p>4a000020010000800000030000000000</p>
+<p><img src="/images/notion/board-debugging/image-44.png" alt="image 44"></p>
+<p>CQE data:00f0000300000020000000003000218000010002000100010000000000000000</p>
+<p>rx_req_tlp_strb_reg[7:0]0f</p>
+<p>CQE HDR : 60000004 000000ff 00000000 20003000</p>
+<p><img src="/images/notion/board-debugging/image-45.png" alt="image 45"></p>
+<p>发现一直不给信号的原因如下所示，找到了原因就可以拿到CQE信号了，可以接下来的步骤了。</p>
+<p>现在基本的读写已经完成了，基本的NVME已经完成，读SSD如下所示</p>
+<p><img src="/images/notion/board-debugging/image-46.png" alt="image 46"></p>
+<p>状态机如下，所有都成功了。</p>
+<p><img src="/images/notion/board-debugging/image-47.png" alt="image 47"></p>
+<p><img src="/images/notion/board-debugging/image-48.png" alt="image 48"></p>
+<p><img src="/images/notion/board-debugging/image-49.png" alt="image 49"></p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/01/20/board-debugging/" data-id="cmo9kurgv0000xki7aizd9ula" data-title="上板调试" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+    </footer>
+  </div>
+  
+</article>
+
+
+
+  
     <article id="post-hello-world" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
   <div class="article-meta">
     <a href="/2025/09/11/hello-world/" class="article-date">
@@ -186,6 +482,10 @@
       <ul>
         
           <li>
+            <a href="/2026/05/21/fpga-nvme-host-09-axi-memory/">FPGA NVMe Host 项目记录（九）：AXI 数据缓存与 PCIe Memory 访问</a>
+          </li>
+        
+          <li>
             <a href="/2026/05/21/fpga-nvme-host-08-prp-address/">FPGA NVMe Host 项目记录（八）：PRP 地址管理</a>
           </li>
         
@@ -199,10 +499,6 @@
         
           <li>
             <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</a>
-          </li>
-        
-          <li>
-            <a href="/2026/05/21/fpga-nvme-host-05-init-queue/">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</a>
           </li>
         
       </ul>

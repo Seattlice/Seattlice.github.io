@@ -78,6 +78,644 @@
       <div class="outer">
         <section id="main">
   
+    <article id="post-fpga-nvme-host-09-axi-memory" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-09-axi-memory/" class="article-date">
+  <time class="dt-published" datetime="2026-05-21T13:55:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="p-name article-title" href="/2026/05/21/fpga-nvme-host-09-axi-memory/">FPGA NVMe Host 项目记录（九）：AXI 数据缓存与 PCIe Memory 访问</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#9-1-%E6%9C%AC%E7%AB%A0%E5%AE%9A%E4%BD%8D">9.1 本章定位</a></li>
+<li><a href="#9-2-%E6%BA%90%E7%A0%81%E6%96%87%E4%BB%B6%E5%AF%B9%E5%BA%94%E5%85%B3%E7%B3%BB">9.2 源码文件对应关系</a></li>
+<li><a href="#9-3-AXI-Lite-%E6%8E%A7%E5%88%B6%E9%9D%A2%E4%B8%8E-AXI4-%E6%95%B0%E6%8D%AE%E9%9D%A2%E7%9A%84%E5%88%86%E5%B7%A5">9.3 AXI-Lite 控制面与 AXI4 数据面的分工</a></li>
+<li><a href="#9-4-AXI-Lite-%E9%A1%B6%E5%B1%82-axi-lite-ctl">9.4 AXI-Lite 顶层 axi_lite_ctl</a></li>
+<li><a href="#9-5-%E5%AF%84%E5%AD%98%E5%99%A8%E6%96%87%E4%BB%B6-nvme-axil-regs">9.5 寄存器文件 nvme_axil_regs</a></li>
+<li><a href="#9-6-%E5%91%BD%E4%BB%A4%E6%9D%A5%E6%BA%90%E9%80%89%E6%8B%A9-cmd-source-mux">9.6 命令来源选择 cmd_source_mux</a></li>
+<li><a href="#9-7-Memory-PRP-%E5%8A%A8%E6%80%81%E9%85%8D%E7%BD%AE">9.7 Memory &#x2F; PRP 动态配置</a></li>
+<li><a href="#9-8-AXI4-%E6%95%B0%E6%8D%AE%E7%BC%93%E5%AD%98%E9%A1%B6%E5%B1%82-pcie-memory-clt-top">9.8 AXI4 数据缓存顶层 pcie_memory_clt_top</a></li>
+<li><a href="#9-9-SSD-MemRd-%E5%88%B0-AXI-Read-%E5%86%8D%E5%88%B0-CC-Completion">9.9 SSD MemRd 到 AXI Read 再到 CC Completion</a></li>
+<li><a href="#9-10-SSD-MemWr-%E5%88%B0-AXI-Write">9.10 SSD MemWr 到 AXI Write</a></li>
+<li><a href="#9-11-%E5%A4%96%E9%83%A8-AXI4-%E7%AB%AF%E5%8F%A3%E4%B8%8E%E5%86%85%E9%83%A8-DMA-%E7%AB%AF%E5%8F%A3">9.11 外部 AXI4 端口与内部 DMA 端口</a></li>
+<li><a href="#9-12-16KB-%E8%AF%BB%E5%86%99%E6%B5%8B%E8%AF%95%E6%8E%A7%E5%88%B6-ssd-rw-test-ctrl">9.12 16KB 读写测试控制 ssd_rw_test_ctrl</a></li>
+<li><a href="#9-13-%E5%9C%B0%E5%9D%80%E6%98%A0%E5%B0%84%E4%B8%8E%E7%AA%97%E5%8F%A3%E5%85%B3%E7%B3%BB">9.13 地址映射与窗口关系</a></li>
+<li><a href="#9-14-%E5%90%9E%E5%90%90%E4%B8%8E%E8%AE%A1%E6%95%B0%E5%99%A8%E8%A7%82%E5%AF%9F">9.14 吞吐与计数器观察</a></li>
+<li><a href="#9-15-%E5%AE%9E%E7%8E%B0%E6%B3%A8%E6%84%8F%E4%BA%8B%E9%A1%B9">9.15 实现注意事项</a></li>
+<li><a href="#9-16-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">9.16 章节总结</a></li>
+</ul>
+<blockquote>
+<p>本章以最新工程 <code>C:\Users\10202\Desktop\Learn\pcie\nvme_host_v2\src</code> 中的 AXI&#x2F;Memory 相关源码为准，主要对应 <code>axi_lite_ctl.v</code>、<code>nvme_axil_regs.v</code>、<code>cmd_source_mux.v</code>、<code>pcie_memory_clt_top.v</code>、<code>AXI_TLP_bridge.v</code>、<code>AXI_TLP_bridge_rd.v</code>、<code>AXI_TLP_bridge_wr.v</code>、<code>axi_dma.v</code>、<code>axi_dp_ram.v</code>、<code>ssd_rw_test_ctrl.v</code>、<code>SSD_ctl.v</code> 和 <code>ssd_top.v</code>。</p>
+</blockquote>
+<p><img src="/images/nvme-host/9-axil-memory-flow.svg" alt="图 9-1 AXI-Lite 控制面与 AXI4 数据面"></p>
+<h2 id="9-1-本章定位"><a href="#9-1-本章定位" class="headerlink" title="9.1 本章定位"></a>9.1 本章定位</h2><p>AXI 相关模块在当前 SSD 控制器里分成两类：控制面和数据面。</p>
+<p>控制面是 AXI-Lite。它负责写寄存器、触发命令、配置队列、配置 Memory&#x2F;PRP window、读取 done&#x2F;error&#x2F;counter&#x2F;status。AXI-Lite 不搬运 16KB 这种数据 payload，它只告诉 SSD 控制器“接下来要做什么”。</p>
+<p>数据面是 AXI4。它负责外部逻辑和 FPGA 内部 memory window 之间的大块数据读写。比如 16KB 写 SSD 流程中，外侧测试状态机先通过 AXI4 把测试 pattern 写入 source buffer；随后 AXI-Lite 只触发 NVMe Write 命令。SSD 真正取数据时，是根据 PRP 地址通过 PCIe CQ 发 MemRd，FPGA 再通过 CC 返回数据。</p>
+<p>两类接口的分工可以概括为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">AXI-Lite:</span><br><span class="line">  配置与命令触发。</span><br><span class="line"></span><br><span class="line">AXI4:</span><br><span class="line">  大块数据缓存读写。</span><br><span class="line"></span><br><span class="line">PCIe CQ/CC:</span><br><span class="line">  SSD 根据 PRP 主动访问 FPGA memory window。</span><br></pre></td></tr></table></figure>
+
+<p>这个分离很重要。否则如果把数据也放到 AXI-Lite 寄存器里传，一次 16KB 读写会变成大量 32-bit 寄存器访问，吞吐会被控制面拖垮。当前结构里，AXI-Lite 只承担少量寄存器开销，实际吞吐主要由 256-bit AXI4、PCIe TLP、MPS 和 SSD 处理速度决定。</p>
+<h2 id="9-2-源码文件对应关系"><a href="#9-2-源码文件对应关系" class="headerlink" title="9.2 源码文件对应关系"></a>9.2 源码文件对应关系</h2><p>AXI&#x2F;Memory 相关源码可以分成三组。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>axi_lite_ctl.v</code></td>
+<td>AXI-Lite 控制顶层，例化寄存器文件和命令源 mux</td>
+</tr>
+<tr>
+<td><code>nvme_axil_regs.v</code></td>
+<td>AXI-Lite 寄存器文件，负责寄存器读写、shadow&#x2F;active 配置、命令打包、状态回读</td>
+</tr>
+<tr>
+<td><code>cmd_source_mux.v</code></td>
+<td>在 AXI-Lite 命令、legacy 初始化命令、高性能 descriptor 之间选择命令来源</td>
+</tr>
+<tr>
+<td><code>pcie_memory_clt_top.v</code></td>
+<td>Memory window 顶层，连接 PCIe CQ&#x2F;CC、AXI DMA、双端口 AXI RAM 和外部 AXI4</td>
+</tr>
+<tr>
+<td><code>AXI_TLP_bridge.v</code></td>
+<td>TLP 到 AXI DMA descriptor&#x2F;stream 的桥接顶层</td>
+</tr>
+<tr>
+<td><code>AXI_TLP_bridge_rd.v</code></td>
+<td>处理 SSD MemRd，生成 AXI read descriptor，并把 AXI read data 组装成 CplD</td>
+</tr>
+<tr>
+<td><code>AXI_TLP_bridge_wr.v</code></td>
+<td>处理 SSD MemWr，生成 AXI write descriptor 和 write data stream</td>
+</tr>
+<tr>
+<td><code>axi_dma.v</code></td>
+<td>AXI DMA 数据搬运模块，把 descriptor&#x2F;stream 转成 AXI4 memory-mapped 访问</td>
+</tr>
+<tr>
+<td><code>axi_dp_ram.v</code></td>
+<td>双端口 AXI RAM，一侧给内部 DMA，一侧暴露给外部 AXI4</td>
+</tr>
+<tr>
+<td><code>ssd_rw_test_ctrl.v</code></td>
+<td>上板 16KB 读写测试状态机，驱动外部 AXI4 和内部 AXI-Lite</td>
+</tr>
+<tr>
+<td><code>SSD_ctl.v</code></td>
+<td>SSD 控制顶层，例化 <code>axi_lite_ctl</code> 和 <code>pcie_memory_clt_top</code></td>
+</tr>
+<tr>
+<td><code>ssd_top.v</code></td>
+<td>对上层暴露 AXI4&#x2F;AXI-Lite&#x2F;VIO 测试相关接口</td>
+</tr>
+</tbody></table>
+<p>整体层级可以简化成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">SSD_ctl</span><br><span class="line">  ├─ axi_lite_ctl</span><br><span class="line">  │   ├─ nvme_axil_regs</span><br><span class="line">  │   └─ cmd_source_mux</span><br><span class="line">  │</span><br><span class="line">  ├─ pcie_memory_clt_top</span><br><span class="line">  │   ├─ AXI_TLP_bridge_top</span><br><span class="line">  │   │   ├─ AXI_TLP_bridge_rd</span><br><span class="line">  │   │   └─ AXI_TLP_bridge_wr</span><br><span class="line">  │   ├─ axi_dma</span><br><span class="line">  │   └─ axi_dp_ram</span><br><span class="line">  │</span><br><span class="line">  ├─ prp_ctl</span><br><span class="line">  ├─ command_ctl</span><br><span class="line">  └─ nvme_queue_ctl</span><br></pre></td></tr></table></figure>
+
+<p>从系统功能看，<code>axi_lite_ctl</code> 是控制入口，<code>pcie_memory_clt_top</code> 是数据窗口。两者通过 PRP 地址联系起来：AXI-Lite 命令里写入 <code>addr</code>，PRP 模块把这个 <code>addr</code> 放入 NVMe SQE，SSD 再按这个地址访问 memory window。</p>
+<h2 id="9-3-AXI-Lite-控制面与-AXI4-数据面的分工"><a href="#9-3-AXI-Lite-控制面与-AXI4-数据面的分工" class="headerlink" title="9.3 AXI-Lite 控制面与 AXI4 数据面的分工"></a>9.3 AXI-Lite 控制面与 AXI4 数据面的分工</h2><p>AXI-Lite 控制面主要处理这些内容：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>全局控制</td>
+<td>controller&#x2F;command&#x2F;queue&#x2F;prp&#x2F;memory enable，soft reset，clear</td>
+</tr>
+<tr>
+<td>命令提交</td>
+<td>command_type、opcode、NSID、addr、LBA、NLB、queue_hint、start</td>
+</tr>
+<tr>
+<td>队列配置</td>
+<td>IO queue enable、dispatch mode、fixed qid、queue weight、apply</td>
+</tr>
+<tr>
+<td>Memory&#x2F;PRP 配置</td>
+<td>memory base&#x2F;window，PRP base&#x2F;window&#x2F;page size，apply</td>
+</tr>
+<tr>
+<td>Watchdog</td>
+<td>enable、policy、timeout cycles</td>
+</tr>
+<tr>
+<td>状态回读</td>
+<td>done、inflight、last done、error、timeout、mismatch</td>
+</tr>
+</tbody></table>
+<p>AXI4 数据面主要处理：</p>
+<table>
+<thead>
+<tr>
+<th>方向</th>
+<th>数据来源</th>
+<th>数据去向</th>
+<th>场景</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>外部 AXI4 写</td>
+<td>测试状态机或上层数据源</td>
+<td>FPGA source buffer</td>
+<td>NVMe Write 前准备数据</td>
+</tr>
+<tr>
+<td>SSD CQ MemRd</td>
+<td>SSD 根据 PRP 读取数据</td>
+<td>FPGA memory window</td>
+<td>NVMe Write payload</td>
+</tr>
+<tr>
+<td>SSD CQ MemWr</td>
+<td>SSD 写回数据</td>
+<td>FPGA destination buffer</td>
+<td>NVMe Read payload</td>
+</tr>
+<tr>
+<td>外部 AXI4 读</td>
+<td>FPGA destination buffer</td>
+<td>测试状态机或上层逻辑</td>
+<td>NVMe Read 后校验数据</td>
+</tr>
+</tbody></table>
+<p>因此一个完整 16KB Write&#x2F;Read 闭环不是 AXI-Lite 自己完成的，而是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">AXI4 写 source buffer</span><br><span class="line">-&gt; AXI-Lite 发 NVMe Write 命令</span><br><span class="line">-&gt; SSD 通过 CQ MemRd 读取 source buffer</span><br><span class="line">-&gt; SSD 内部完成写入</span><br><span class="line">-&gt; AXI-Lite 发 NVMe Read 命令</span><br><span class="line">-&gt; SSD 通过 CQ MemWr 写 destination buffer</span><br><span class="line">-&gt; AXI4 读 destination buffer 并比较 pattern</span><br></pre></td></tr></table></figure>
+
+<h2 id="9-4-AXI-Lite-顶层-axi-lite-ctl"><a href="#9-4-AXI-Lite-顶层-axi-lite-ctl" class="headerlink" title="9.4 AXI-Lite 顶层 axi_lite_ctl"></a>9.4 AXI-Lite 顶层 axi_lite_ctl</h2><p><code>axi_lite_ctl.v</code> 是 AXI-Lite 控制面的封装顶层。它直接暴露标准 AXI-Lite slave 端口：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [AXIL_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>] s_axil_awaddr;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                       s_axil_awvalid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                       s_axil_awready;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [AXIL_DATA_WIDTH-<span class="number">1</span>:<span class="number">0</span>] s_axil_wdata;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [AXIL_DATA_WIDTH/<span class="number">8</span>-<span class="number">1</span>:<span class="number">0</span>] s_axil_wstrb;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                       s_axil_wvalid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                       s_axil_wready;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">1</span>:<span class="number">0</span>]                 s_axil_bresp;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                       s_axil_bvalid;</span><br><span class="line"></span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [AXIL_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>] s_axil_araddr;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                       s_axil_arvalid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                       s_axil_arready;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [AXIL_DATA_WIDTH-<span class="number">1</span>:<span class="number">0</span>] s_axil_rdata;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                       s_axil_rvalid;</span><br></pre></td></tr></table></figure>
+
+<p>内部首先对 AXI-Lite 输入做了一层 X 态安全处理：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> axil_awvalid_safe = (s_axil_awvalid === <span class="number">1&#x27;b1</span>);</span><br><span class="line"><span class="keyword">wire</span> axil_wvalid_safe  = (s_axil_wvalid  === <span class="number">1&#x27;b1</span>);</span><br><span class="line"><span class="keyword">wire</span> axil_bready_safe  = (s_axil_bready  === <span class="number">1&#x27;b1</span>);</span><br><span class="line"><span class="keyword">wire</span> axil_arvalid_safe = (s_axil_arvalid === <span class="number">1&#x27;b1</span>);</span><br><span class="line"><span class="keyword">wire</span> axil_rready_safe  = (s_axil_rready  === <span class="number">1&#x27;b1</span>);</span><br></pre></td></tr></table></figure>
+
+<p>这对仿真比较有用。仿真早期如果上游还没有把 valid&#x2F;ready 初始化为 0，模块不会把 X 当作有效握手。</p>
+<p><code>axi_lite_ctl</code> 内部的两个主要模块是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">nvme_axil_regs u_nvme_axil_regs (...);</span><br><span class="line">cmd_source_mux u_cmd_source_mux (...);</span><br></pre></td></tr></table></figure>
+
+<p>其中 <code>nvme_axil_regs</code> 负责寄存器，<code>cmd_source_mux</code> 负责选择命令来源。<code>axi_lite_ctl</code> 还会根据系统 busy 状态生成配置保护信号：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> queue_idle = (inflight_total == <span class="number">16&#x27;d0</span>) &amp;&amp;</span><br><span class="line">                  !admin_command_valid &amp;&amp;</span><br><span class="line">                  !io_command_valid;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> prp_busy = prp_id_request || prp_output_valid || !cmd_ready;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> memory_busy = (|memory_wr_rx_valid) ||</span><br><span class="line">                   (|memory_rd_rx_valid) ||</span><br><span class="line">                   (|memory_tx_cpl_valid);</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> command_idle = queue_idle &amp;&amp;</span><br><span class="line">                    !prp_busy &amp;&amp;</span><br><span class="line">                    !cmd_valid;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> mem_prp_idle = !prp_busy &amp;&amp; !memory_busy;</span><br></pre></td></tr></table></figure>
+
+<p>这些 idle&#x2F;busy 信号不是为了显示状态而已，它们直接决定一些危险配置能不能被 apply。例如正在有命令飞行时切换 command source，或 memory&#x2F;PRP 正在被访问时改 base&#x2F;window，都可能导致地址不一致。因此源码中把这些操作限制到 idle 状态。</p>
+<h2 id="9-5-寄存器文件-nvme-axil-regs"><a href="#9-5-寄存器文件-nvme-axil-regs" class="headerlink" title="9.5 寄存器文件 nvme_axil_regs"></a>9.5 寄存器文件 nvme_axil_regs</h2><p><code>nvme_axil_regs.v</code> 是 AXI-Lite 寄存器文件。它把地址空间分成几段：</p>
+<table>
+<thead>
+<tr>
+<th>地址范围</th>
+<th>主要内容</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0x000</code> - <code>0x00c</code></td>
+<td>全局控制、状态、clear</td>
+</tr>
+<tr>
+<td><code>0x100</code> - <code>0x128</code></td>
+<td>命令提交寄存器</td>
+</tr>
+<tr>
+<td><code>0x200</code> - <code>0x224</code></td>
+<td>IO queue 配置</td>
+</tr>
+<tr>
+<td><code>0x300</code> - <code>0x314</code></td>
+<td>done、queue、inflight、last done</td>
+</tr>
+<tr>
+<td><code>0x400</code> - <code>0x420</code></td>
+<td>error、timeout、mismatch、last error</td>
+</tr>
+<tr>
+<td><code>0x500</code> - <code>0x528</code></td>
+<td>memory&#x2F;PRP 配置</td>
+</tr>
+<tr>
+<td><code>0x600</code> - <code>0x608</code></td>
+<td>watchdog 配置</td>
+</tr>
+</tbody></table>
+<p>源码中寄存器地址集中定义：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_CTRL        = <span class="number">12&#x27;h100</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_NSID        = <span class="number">12&#x27;h104</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_ADDR_LO     = <span class="number">12&#x27;h108</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_ADDR_HI     = <span class="number">12&#x27;h10c</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_LBA_LO      = <span class="number">12&#x27;h110</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_LBA_HI      = <span class="number">12&#x27;h114</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_START       = <span class="number">12&#x27;h118</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_SOURCE_CTRL = <span class="number">12&#x27;h120</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">11</span>:<span class="number">0</span>] REG_CMD_QUEUE_HINT  = <span class="number">12&#x27;h128</span>;</span><br></pre></td></tr></table></figure>
+
+<p>写寄存器时，模块支持 byte strobe：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">function</span> [<span class="number">31</span>:<span class="number">0</span>] apply_wstrb32;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">31</span>:<span class="number">0</span>] old_value;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">31</span>:<span class="number">0</span>] new_value;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">3</span>:<span class="number">0</span>]  strb;</span><br><span class="line">    <span class="keyword">integer</span> j;</span><br><span class="line">    <span class="keyword">begin</span></span><br><span class="line">        apply_wstrb32 = old_value;</span><br><span class="line">        <span class="keyword">for</span> (j = <span class="number">0</span>; j &lt; <span class="number">4</span>; j = j + <span class="number">1</span>) <span class="keyword">begin</span></span><br><span class="line">            <span class="keyword">if</span> (strb[j]) <span class="keyword">begin</span></span><br><span class="line">                apply_wstrb32[j*<span class="number">8</span> +: <span class="number">8</span>] = new_value[j*<span class="number">8</span> +: <span class="number">8</span>];</span><br><span class="line">            <span class="keyword">end</span></span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">endfunction</span></span><br></pre></td></tr></table></figure>
+
+<p>这和前面调试时讨论的一样：有时候只改 1DW 的某几个 byte，有时候完整写 32-bit，所以 <code>WSTRB</code> 不能简单忽略。</p>
+<p>命令触发不是写完 <code>CMD_CTRL/ADDR/LBA</code> 就立刻进入主链路，而是写 <code>REG_CMD_START</code> 时打包成 pending descriptor：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">REG_CMD_START: <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (write_strb[<span class="number">0</span>] &amp;&amp; write_data[<span class="number">0</span>]) <span class="keyword">begin</span></span><br><span class="line">        <span class="keyword">if</span> (!cmd_pending_valid_reg || cmd_accept_fire) <span class="keyword">begin</span></span><br><span class="line">            cmd_pending_desc_reg &lt;= pack_cmd_desc(</span><br><span class="line">                cmd_ctrl_reg,</span><br><span class="line">                cmd_nsid_reg,</span><br><span class="line">                cmd_addr_reg,</span><br><span class="line">                cmd_lba_reg,</span><br><span class="line">                cmd_queue_hint_reg</span><br><span class="line">            );</span><br><span class="line">            cmd_pending_valid_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">            cmd_start_busy_error_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>也就是说：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">先写命令参数寄存器；</span><br><span class="line">最后写 CMD_START；</span><br><span class="line">模块把当时的寄存器快照打包；</span><br><span class="line">下游 ready 后再真正送出。</span><br></pre></td></tr></table></figure>
+
+<p>命令 descriptor 的 bit 分布如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">tmp[<span class="number">31</span>:<span class="number">0</span>]    = cmd_ctrl;</span><br><span class="line">tmp[<span class="number">63</span>:<span class="number">32</span>]   = nsid;</span><br><span class="line">tmp[<span class="number">95</span>:<span class="number">64</span>]   = addr[<span class="number">31</span>:<span class="number">0</span>];</span><br><span class="line">tmp[<span class="number">127</span>:<span class="number">96</span>]  = addr[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line">tmp[<span class="number">159</span>:<span class="number">128</span>] = lba[<span class="number">31</span>:<span class="number">0</span>];</span><br><span class="line">tmp[<span class="number">191</span>:<span class="number">160</span>] = lba[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line">tmp[<span class="number">196</span>:<span class="number">192</span>] = queue_hint;</span><br></pre></td></tr></table></figure>
+
+<p>输出给命令源 mux 的字段则直接从 pending descriptor 拆出：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> axil_cmd_valid        = cmd_pending_valid_reg;</span><br><span class="line"><span class="keyword">assign</span> axil_cmd_command_type = cmd_pending_desc_reg[<span class="number">1</span>:<span class="number">0</span>];</span><br><span class="line"><span class="keyword">assign</span> axil_cmd_opcode       = cmd_pending_desc_reg[<span class="number">15</span>:<span class="number">8</span>];</span><br><span class="line"><span class="keyword">assign</span> axil_cmd_length       = cmd_pending_desc_reg[<span class="number">31</span>:<span class="number">16</span>];</span><br><span class="line"><span class="keyword">assign</span> axil_cmd_nsid         = cmd_pending_desc_reg[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line"><span class="keyword">assign</span> axil_cmd_addr         = cmd_pending_desc_reg[<span class="number">127</span>:<span class="number">64</span>];</span><br><span class="line"><span class="keyword">assign</span> axil_cmd_lba          = cmd_pending_desc_reg[<span class="number">191</span>:<span class="number">128</span>];</span><br><span class="line"><span class="keyword">assign</span> axil_cmd_queue_hint   = cmd_pending_desc_reg[<span class="number">192</span> +: QUEUE_ID_WIDTH];</span><br></pre></td></tr></table></figure>
+
+<p>这里 <code>cmd_ctrl[31:0]</code> 同时包含 <code>command_type/opcode/length</code>，所以 AXI-Lite 发命令时不需要单独再写一组拆开的字段。</p>
+<h2 id="9-6-命令来源选择-cmd-source-mux"><a href="#9-6-命令来源选择-cmd-source-mux" class="headerlink" title="9.6 命令来源选择 cmd_source_mux"></a>9.6 命令来源选择 cmd_source_mux</h2><p>当前系统有三类命令来源：</p>
+<table>
+<thead>
+<tr>
+<th>来源</th>
+<th>入口</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>legacy command</td>
+<td><code>legacy_*</code></td>
+<td>初始化阶段创建 IO CQ &#x2F; IO SQ</td>
+</tr>
+<tr>
+<td>AXI-Lite command regs</td>
+<td><code>axil_cmd_*</code></td>
+<td>运行时通过寄存器发读写命令</td>
+</tr>
+<tr>
+<td>external descriptor</td>
+<td><code>ext_cmd_desc_*</code></td>
+<td>高性能命令输入，减少 AXI-Lite 多次寄存器写开销</td>
+</tr>
+</tbody></table>
+<p><code>axi_lite_ctl.v</code> 会先把 high performance descriptor 和 legacy command 合成一路 ext source：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> high_perf_desc_valid = (ext_cmd_desc_valid === <span class="number">1&#x27;b1</span>);</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [CMD_DESC_WIDTH-<span class="number">1</span>:<span class="number">0</span>] ext_cmd_desc_mux =</span><br><span class="line">    high_perf_desc_valid ? ext_cmd_desc_data : legacy_cmd_desc;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> ext_cmd_valid_mux = high_perf_desc_valid || legacy_valid;</span><br></pre></td></tr></table></figure>
+
+<p>然后由 <code>cmd_source_mux.v</code> 根据 <code>cmd_source_sel</code> 选择 AXI-Lite command 或 ext command：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> source_ext  = cmd_source_sel;</span><br><span class="line"><span class="keyword">wire</span> source_axil = !cmd_source_sel;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> cmd_valid = accept_enable &amp;&amp;</span><br><span class="line">                   (source_ext ? ext_cmd_valid : axil_cmd_valid);</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> axil_cmd_ready = accept_enable &amp;&amp;</span><br><span class="line">                        source_axil &amp;&amp;</span><br><span class="line">                        cmd_ready;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> ext_cmd_ready = accept_enable &amp;&amp;</span><br><span class="line">                       source_ext &amp;&amp;</span><br><span class="line">                       cmd_ready;</span><br></pre></td></tr></table></figure>
+
+<p>复位时 <code>nvme_axil_regs.v</code> 中：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">global_ctrl_reg &lt;= <span class="number">32&#x27;h0000_003d</span>;</span><br><span class="line">cmd_source_sel_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br></pre></td></tr></table></figure>
+
+<p><code>0x3d</code> 对应 controller、command、queue、prp、memory 默认使能，soft reset 位不保持；<code>cmd_source_sel_reg = 1</code> 表示默认选择 ext source，这样初始化命令或高性能 descriptor 可以优先工作。运行阶段如果要用 AXI-Lite 寄存器发命令，可以通过 <code>REG_CMD_SOURCE_CTRL = 0x120</code> 切换到 AXI-Lite source。</p>
+<p>切换命令来源也有保护：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">REG_CMD_SOURCE_CTRL: <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (write_strb[<span class="number">0</span>]) <span class="keyword">begin</span></span><br><span class="line">        <span class="keyword">if</span> (command_idle) <span class="keyword">begin</span></span><br><span class="line">            cmd_source_sel_reg &lt;= write_data[<span class="number">0</span>];</span><br><span class="line">        <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">            source_switch_busy_error_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>也就是说，命令链路空闲时才能切 source，避免上一条命令还没被消费时换入口。</p>
+<h2 id="9-7-Memory-PRP-动态配置"><a href="#9-7-Memory-PRP-动态配置" class="headerlink" title="9.7 Memory &#x2F; PRP 动态配置"></a>9.7 Memory &#x2F; PRP 动态配置</h2><p>Memory&#x2F;PRP 配置采用 shadow&#x2F;active&#x2F;apply 机制。寄存器地址如下：</p>
+<table>
+<thead>
+<tr>
+<th>地址</th>
+<th>寄存器</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0x500</code></td>
+<td><code>REG_MEMORY_BASE_LO_SHADOW</code></td>
+<td>memory window base 低 32 位</td>
+</tr>
+<tr>
+<td><code>0x504</code></td>
+<td><code>REG_MEMORY_BASE_HI_SHADOW</code></td>
+<td>memory window base 高 32 位</td>
+</tr>
+<tr>
+<td><code>0x508</code></td>
+<td><code>REG_MEMORY_WINDOW_LO_SHADOW</code></td>
+<td>memory window size 低 32 位</td>
+</tr>
+<tr>
+<td><code>0x50c</code></td>
+<td><code>REG_MEMORY_WINDOW_HI_SHADOW</code></td>
+<td>memory window size 高 32 位</td>
+</tr>
+<tr>
+<td><code>0x510</code></td>
+<td><code>REG_PRP_BASE_LO_SHADOW</code></td>
+<td>PRP List base 低 32 位</td>
+</tr>
+<tr>
+<td><code>0x514</code></td>
+<td><code>REG_PRP_BASE_HI_SHADOW</code></td>
+<td>PRP List base 高 32 位</td>
+</tr>
+<tr>
+<td><code>0x518</code></td>
+<td><code>REG_PRP_WINDOW_LO_SHADOW</code></td>
+<td>PRP List window size 低 32 位</td>
+</tr>
+<tr>
+<td><code>0x51c</code></td>
+<td><code>REG_PRP_WINDOW_HI_SHADOW</code></td>
+<td>PRP List window size 高 32 位</td>
+</tr>
+<tr>
+<td><code>0x520</code></td>
+<td><code>REG_PRP_PAGE_SIZE_SHADOW</code></td>
+<td>PRP page size</td>
+</tr>
+<tr>
+<td><code>0x524</code></td>
+<td><code>REG_MEM_PRP_CFG_APPLY</code></td>
+<td>应用 shadow 到 active</td>
+</tr>
+<tr>
+<td><code>0x528</code></td>
+<td><code>REG_MEM_PRP_CFG_STATUS</code></td>
+<td>idle &#x2F; busy error &#x2F; apply done</td>
+</tr>
+</tbody></table>
+<p>reset 时 active 和 shadow 都加载默认参数：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">memory_base_shadow_reg    &lt;= RESET_MEMORY_BASE_ADDR;</span><br><span class="line">memory_window_shadow_reg  &lt;= RESET_MEMORY_WINDOW_SIZE;</span><br><span class="line">prp_base_shadow_reg       &lt;= RESET_PRP_BASE_ADDR;</span><br><span class="line">prp_window_shadow_reg     &lt;= RESET_PRP_WINDOW_SIZE;</span><br><span class="line">prp_page_size_shadow_reg  &lt;= RESET_PRP_PAGE_SIZE;</span><br><span class="line"></span><br><span class="line">memory_base_active_reg    &lt;= RESET_MEMORY_BASE_ADDR;</span><br><span class="line">memory_window_active_reg  &lt;= RESET_MEMORY_WINDOW_SIZE;</span><br><span class="line">prp_base_active_reg       &lt;= RESET_PRP_BASE_ADDR;</span><br><span class="line">prp_window_active_reg     &lt;= RESET_PRP_WINDOW_SIZE;</span><br><span class="line">prp_page_size_active_reg  &lt;= RESET_PRP_PAGE_SIZE;</span><br></pre></td></tr></table></figure>
+
+<p>写 apply 时必须等 <code>mem_prp_idle</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">REG_MEM_PRP_CFG_APPLY: <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (write_strb[<span class="number">0</span>] &amp;&amp; write_data[<span class="number">0</span>]) <span class="keyword">begin</span></span><br><span class="line">        <span class="keyword">if</span> (mem_prp_idle) <span class="keyword">begin</span></span><br><span class="line">            memory_base_active_reg   &lt;= memory_base_shadow_reg;</span><br><span class="line">            memory_window_active_reg &lt;= memory_window_shadow_reg;</span><br><span class="line">            prp_base_active_reg      &lt;= prp_base_shadow_reg;</span><br><span class="line">            prp_window_active_reg    &lt;= prp_window_shadow_reg;</span><br><span class="line">            prp_page_size_active_reg &lt;= prp_page_size_shadow_reg;</span><br><span class="line">            mem_prp_cfg_apply_pulse  &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">            mem_prp_cfg_apply_done_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">            mem_prp_cfg_busy_error_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">            mem_prp_cfg_apply_done_reg &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>active 输出如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> memory_base_addr   = memory_base_active_reg;</span><br><span class="line"><span class="keyword">assign</span> memory_window_size = memory_window_active_reg;</span><br><span class="line"><span class="keyword">assign</span> prp_base_addr      = prp_base_active_reg;</span><br><span class="line"><span class="keyword">assign</span> prp_window_size    = prp_window_active_reg;</span><br><span class="line"><span class="keyword">assign</span> prp_page_size      = prp_page_size_active_reg;</span><br></pre></td></tr></table></figure>
+
+<p>这些输出会同时影响：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">CQ_route:</span><br><span class="line">  判断 SSD MemRd/MemWr 是访问 memory window、PRP window、queue window 还是 drop。</span><br><span class="line"></span><br><span class="line">pcie_memory_clt_top:</span><br><span class="line">  把 SSD 访问的绝对地址转换成 AXI RAM 内部 offset。</span><br><span class="line"></span><br><span class="line">prp_ctl:</span><br><span class="line">  根据 PRP base/page size 计算 PRP2 和 PRP List entry。</span><br></pre></td></tr></table></figure>
+
+<h2 id="9-8-AXI4-数据缓存顶层-pcie-memory-clt-top"><a href="#9-8-AXI4-数据缓存顶层-pcie-memory-clt-top" class="headerlink" title="9.8 AXI4 数据缓存顶层 pcie_memory_clt_top"></a>9.8 AXI4 数据缓存顶层 pcie_memory_clt_top</h2><p><code>pcie_memory_clt_top.v</code> 是 memory window 的核心顶层。它左边接 PCIe CQ&#x2F;CC，右边接外部 AXI4，中间通过 AXI DMA 和双端口 RAM 连接。</p>
+<p>模块参数中最关键的是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">parameter</span> PCIE_DATA_WIDTH     = <span class="number">256</span>;</span><br><span class="line"><span class="keyword">parameter</span> MAX_PAYLOAD_SIZE    = <span class="number">128</span>;</span><br><span class="line"><span class="keyword">parameter</span> ADDRESS_TRANSLATE_ENABLE = <span class="number">0</span>;</span><br><span class="line"><span class="keyword">parameter</span> MEMORY_BASE_ADDRESS = <span class="number">32&#x27;h0000_0000</span>;</span><br><span class="line"><span class="keyword">parameter</span> MEMORY_WINDOW_SIZE  = <span class="number">32&#x27;h0001_0000</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">parameter</span> AXI_DATA_WIDTH      = PCIE_DATA_WIDTH;</span><br><span class="line"><span class="keyword">parameter</span> AXI_ADDR_WIDTH      = <span class="number">32</span>;</span><br><span class="line"><span class="keyword">parameter</span> RAM_ADDR_WIDTH      = <span class="number">16</span>;</span><br></pre></td></tr></table></figure>
+
+<p>当前 <code>SSD_ctl.v</code> 例化时启用了地址转换：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">pcie_memory_clt_top #(</span><br><span class="line">    <span class="variable">.PCIE_DATA_WIDTH</span>          (AXIS_PCIE_DATA_WIDTH),</span><br><span class="line">    <span class="variable">.MAX_PAYLOAD_SIZE</span>         (MAX_PAYLOAD_SIZE),</span><br><span class="line">    <span class="variable">.COMPLETER_ID</span>             (MEMORY_COMPLETER_ID),</span><br><span class="line">    <span class="variable">.ADDRESS_TRANSLATE_ENABLE</span> (<span class="number">1</span>),</span><br><span class="line">    <span class="variable">.MEMORY_BASE_ADDRESS</span>      (MEMORY_BASE_ADDRESS),</span><br><span class="line">    <span class="variable">.MEMORY_WINDOW_SIZE</span>       (MEMORY_WINDOW_SIZE),</span><br><span class="line">    <span class="variable">.AXI_DATA_WIDTH</span>           (AXIS_PCIE_DATA_WIDTH),</span><br><span class="line">    <span class="variable">.RAM_ADDR_WIDTH</span>           (MEMORY_RAM_ADDR_WIDTH),</span><br><span class="line">    <span class="variable">.AXI_ID_WIDTH</span>             (MEMORY_AXI_ID_WIDTH)</span><br><span class="line">) u_pcie_memory_clt_top (...);</span><br></pre></td></tr></table></figure>
+
+<p><code>ADDRESS_TRANSLATE_ENABLE = 1</code> 的含义是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">SSD 看到的是绝对地址，例如 0x3000_2000；</span><br><span class="line">内部 AXI RAM 看到的是 offset，例如 0x0000。</span><br></pre></td></tr></table></figure>
+
+<p>顶层内部三个主要实例是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">AXI_TLP_bridge_top u_axi_tlp_bridge (...);</span><br><span class="line">axi_dma            u_axi_dma (...);</span><br><span class="line">axi_dp_ram         u_axi_dp_ram (...);</span><br></pre></td></tr></table></figure>
+
+<p><code>AXI_TLP_bridge_top</code> 负责 TLP 和 DMA stream&#x2F;descriptor 的转换；<code>axi_dma</code> 负责真正发 AXI4 read&#x2F;write；<code>axi_dp_ram</code> 是两个 AXI slave port 的 RAM，其中 Port A 给 DMA，Port B 给外部 AXI4。</p>
+<p>当前数据宽度是 256 bit，也就是每拍 32B：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">AXI_DATA_WIDTH = 256 bit</span><br><span class="line">AXI_STRB_WIDTH = 32 byte</span><br></pre></td></tr></table></figure>
+
+<p><code>RAM_ADDR_WIDTH = 16</code> 时，RAM 地址空间是 64KB：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">2^16 bytes = 64KB</span><br></pre></td></tr></table></figure>
+
+<p>这也是当前 <code>MEMORY_WINDOW_SIZE = 64KB</code> 的来源。</p>
+<h2 id="9-9-SSD-MemRd-到-AXI-Read-再到-CC-Completion"><a href="#9-9-SSD-MemRd-到-AXI-Read-再到-CC-Completion" class="headerlink" title="9.9 SSD MemRd 到 AXI Read 再到 CC Completion"></a>9.9 SSD MemRd 到 AXI Read 再到 CC Completion</h2><p>NVMe Write 命令执行时，SSD 需要从 FPGA memory window 读取 payload。SSD 发出的是 PCIe MemRd，进入 FPGA 后路径为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">SSD CQ MemRd</span><br><span class="line">-&gt; CQ_route 命中 memory window</span><br><span class="line">-&gt; MEM_RD_rx_req_tlp_*</span><br><span class="line">-&gt; AXI_TLP_bridge_rd</span><br><span class="line">-&gt; axi_dma read descriptor</span><br><span class="line">-&gt; axi_dp_ram Port A read</span><br><span class="line">-&gt; AXI read data stream</span><br><span class="line">-&gt; AXI_TLP_bridge_rd 组装 CplD</span><br><span class="line">-&gt; MEM_tx_cpl_tlp_*</span><br><span class="line">-&gt; CC_round_robin</span><br><span class="line">-&gt; PCIe CC</span><br><span class="line">-&gt; SSD</span><br></pre></td></tr></table></figure>
+
+<p><code>AXI_TLP_bridge_rd.v</code> 先解析 MemRd header：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">9</span>:<span class="number">0</span>]  req_len_dw_field = MEM_RD_rx_req_tlp_hdr[<span class="number">105</span>:<span class="number">96</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">12</span>:<span class="number">0</span>] req_len_dw =</span><br><span class="line">    (req_len_dw_field == <span class="number">10&#x27;d0</span>) ? <span class="number">13&#x27;d1024</span> : &#123;<span class="number">3&#x27;d0</span>, req_len_dw_field&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] req_id  = MEM_RD_rx_req_tlp_hdr[<span class="number">95</span>:<span class="number">80</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">7</span>:<span class="number">0</span>]  req_tag = MEM_RD_rx_req_tlp_hdr[<span class="number">79</span>:<span class="number">72</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">3</span>:<span class="number">0</span>]  req_last_be  = MEM_RD_rx_req_tlp_hdr[<span class="number">71</span>:<span class="number">68</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">3</span>:<span class="number">0</span>]  req_first_be = MEM_RD_rx_req_tlp_hdr[<span class="number">67</span>:<span class="number">64</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] req_base_addr = &#123;MEM_RD_rx_req_tlp_hdr[<span class="number">31</span>:<span class="number">2</span>], <span class="number">2&#x27;b00</span>&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>然后判断是否命中 memory window，并在启用地址转换时把绝对地址转换成 RAM offset：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] memory_base_addr_safe =</span><br><span class="line">    ((^cfg_memory_base_addr) === <span class="number">1&#x27;bx</span>) ? &#123;<span class="number">32&#x27;d0</span>, MEMORY_BASE_ADDRESS&#125; :</span><br><span class="line">                                         cfg_memory_base_addr;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] req_addr_offset64 = req_base_addr64 - memory_base_addr_safe;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> req_addr_hit =</span><br><span class="line">    !ADDRESS_TRANSLATE_ENABLE ||</span><br><span class="line">    (req_addr_ge_base &amp;&amp; req_addr_offset64 &lt; memory_window_size_safe);</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] req_mapped_base_addr =</span><br><span class="line">    ADDRESS_TRANSLATE_ENABLE ? req_addr_offset : req_base_addr;</span><br></pre></td></tr></table></figure>
+
+<p>读请求不是一次性全部发给 AXI，而是按 MPS 和 RCB 切分成多个 chunk：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">12</span>:<span class="number">0</span>] rcb_offset = cur_addr_reg[<span class="number">12</span>:<span class="number">0</span>] &amp; (RCB_SIZE_INT - <span class="number">13&#x27;d1</span>);</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">12</span>:<span class="number">0</span>] rcb_remain = RCB_SIZE_INT - rcb_offset;</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">12</span>:<span class="number">0</span>] chunk_mps  = min2_13(bytes_left_reg, MAX_PAYLOAD_SIZE_INT);</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">12</span>:<span class="number">0</span>] chunk_bytes = min2_13(chunk_mps, rcb_remain);</span><br></pre></td></tr></table></figure>
+
+<p>当前 <code>MAX_PAYLOAD_SIZE = 128B</code>，所以即使 SSD 一次 MemRd 更大，FPGA 返回的 CplD 也会按最大 128B payload 拆分。这和上板时观察到“不能只回 32B，否则包头开销太大”的问题有关：现在 read bridge 按 MPS 切 chunk，256-bit 数据口下 128B 正好是 4 个 beat。</p>
+<p>读 descriptor 输出给 AXI DMA：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> m_axis_read_desc_valid = desc_valid_reg;</span><br><span class="line"><span class="keyword">assign</span> m_axis_read_desc_addr  = desc_addr_reg;</span><br><span class="line"><span class="keyword">assign</span> m_axis_read_desc_len   = desc_len_reg;</span><br><span class="line"><span class="keyword">assign</span> m_axis_read_desc_tag   = desc_tag_reg;</span><br></pre></td></tr></table></figure>
+
+<p>返回 CC completion 时，<code>AXI_TLP_bridge_rd</code> 会把原请求的 requester ID、tag、lower address 等信息放回 header：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">127</span>:<span class="number">0</span>] tlp_cpld = &#123;</span><br><span class="line">    cpl_type[<span class="number">7</span>:<span class="number">5</span>], cpl_type[<span class="number">4</span>:<span class="number">0</span>],</span><br><span class="line">    ...</span><br><span class="line">    COMPLETER_ID,</span><br><span class="line">    <span class="number">3&#x27;b000</span>,</span><br><span class="line">    <span class="number">1&#x27;b0</span>,</span><br><span class="line">    cc_byte_count,</span><br><span class="line"></span><br><span class="line">    cc_req_id,</span><br><span class="line">    cc_tag,</span><br><span class="line">    <span class="number">1&#x27;b0</span>,</span><br><span class="line">    cc_lower_addr,</span><br><span class="line"></span><br><span class="line">    <span class="number">32&#x27;d0</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>最后输出：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> MEM_tx_cpl_tlp_hdr   = tlp_cpld;</span><br><span class="line"><span class="keyword">assign</span> MEM_tx_cpl_tlp_data  = cpl_data_head ? s_axis_read_data_tdata : &#123;TLP_DATA_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line"><span class="keyword">assign</span> MEM_tx_cpl_tlp_strb  = cpl_data_head ? cpl_tlp_strb : &#123;TLP_STRB_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line"><span class="keyword">assign</span> MEM_tx_cpl_tlp_valid = cpl_zero_head || (cpl_data_head &amp;&amp; s_axis_read_data_tvalid);</span><br><span class="line"><span class="keyword">assign</span> MEM_tx_cpl_tlp_sop   = cpl_data_head ? is_first_beat : <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">assign</span> MEM_tx_cpl_tlp_eop   = cpl_data_head ? s_axis_read_data_tlast : <span class="number">1&#x27;b1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>这条链路就是 NVMe Write 的实际数据读取路径。</p>
+<h2 id="9-10-SSD-MemWr-到-AXI-Write"><a href="#9-10-SSD-MemWr-到-AXI-Write" class="headerlink" title="9.10 SSD MemWr 到 AXI Write"></a>9.10 SSD MemWr 到 AXI Write</h2><p>NVMe Read 命令执行时，SSD 会把从 NAND 读出的数据写回 FPGA memory window。SSD 发出的是 PCIe MemWr，进入 FPGA 后路径为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">SSD CQ MemWr</span><br><span class="line">-&gt; CQ_route 命中 memory window</span><br><span class="line">-&gt; MEM_WR_rx_req_tlp_*</span><br><span class="line">-&gt; AXI_TLP_bridge_wr</span><br><span class="line">-&gt; axi_dma write descriptor + write data stream</span><br><span class="line">-&gt; axi_dp_ram Port A write</span><br><span class="line">-&gt; 外部 AXI4 从 destination buffer 读回</span><br></pre></td></tr></table></figure>
+
+<p><code>AXI_TLP_bridge_wr.v</code> 解析 MemWr header：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">11</span>:<span class="number">0</span>] wr_len_dw =</span><br><span class="line">    (MEM_WR_rx_req_tlp_hdr[<span class="number">105</span>:<span class="number">96</span>] == <span class="number">10&#x27;d0</span>) ? <span class="number">12&#x27;d1024</span> :</span><br><span class="line">                                                MEM_WR_rx_req_tlp_hdr[<span class="number">105</span>:<span class="number">96</span>];</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] wr_base_addr = &#123;MEM_WR_rx_req_tlp_hdr[<span class="number">31</span>:<span class="number">2</span>], <span class="number">2&#x27;b00</span>&#125;;</span><br><span class="line"><span class="keyword">wire</span> [TAG_WIDTH-<span class="number">1</span>:<span class="number">0</span>] wr_desc_tag = MEM_WR_rx_req_tlp_hdr[<span class="number">79</span>:<span class="number">72</span>];</span><br></pre></td></tr></table></figure>
+
+<p>同样先做 memory window 命中和地址转换：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] wr_addr_offset64 = wr_base_addr64 - memory_base_addr_safe;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> wr_addr_hit =</span><br><span class="line">    !ADDRESS_TRANSLATE_ENABLE ||</span><br><span class="line">    (wr_addr_ge_base &amp;&amp; wr_addr_offset64 &lt; memory_window_size_safe);</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [AXI_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>] wr_desc_addr =</span><br><span class="line">    ADDRESS_TRANSLATE_ENABLE ? wr_addr_offset[AXI_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>] :</span><br><span class="line">                               wr_base_addr[AXI_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>];</span><br></pre></td></tr></table></figure>
+
+<p>写 descriptor 的长度按 DW 转字节：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [LEN_WIDTH-<span class="number">1</span>:<span class="number">0</span>] wr_desc_len =</span><br><span class="line">    &#123;&#123;(LEN_WIDTH-<span class="number">14</span>)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, wr_len_dw, <span class="number">2&#x27;b00</span>&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>TLP <code>strb</code> 是按 DW 表示的，AXI stream <code>tkeep</code> 是按 byte 表示的，所以源码把每个 TLP strb bit 扩展成 4 个 byte keep：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; TLP_STRB_WIDTH; i = i + <span class="number">1</span>) <span class="keyword">begin</span> : gen_wr_strb</span><br><span class="line">    <span class="keyword">assign</span> wr_tkeep[i*<span class="number">4</span> + <span class="number">3</span> : i*<span class="number">4</span>] = &#123;<span class="number">4</span>&#123;MEM_WR_rx_req_tlp_strb[i]&#125;&#125;;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>写路径有两个小 FIFO：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> PAYLOAD_FIFO_ADDR_WIDTH = <span class="number">5</span>; <span class="comment">// 32 entries</span></span><br><span class="line"><span class="keyword">localparam</span> DESC_FIFO_ADDR_WIDTH    = <span class="number">3</span>; <span class="comment">// 8 entries</span></span><br></pre></td></tr></table></figure>
+
+<p>descriptor FIFO 保存地址、长度和 tag；payload FIFO 保存 TLP data、keep、last。这样 TLP 输入和 DMA 写输出之间可以有一定缓冲，不要求两边完全同拍。</p>
+<p>如果地址没有命中 memory window，模块会 drop 当前 TLP frame：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> payload_fifo_push =</span><br><span class="line">    tlp_accept &amp;&amp; (tlp_packet_start ? wr_addr_hit : !drop_tlp_frame_reg);</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (tlp_accept) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (tlp_packet_start) <span class="keyword">begin</span></span><br><span class="line">        in_tlp_frame_reg &lt;= !tlp_eop;</span><br><span class="line">        drop_tlp_frame_reg &lt;= !wr_addr_hit &amp;&amp; !tlp_eop;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这说明 memory window 的配置不是只影响 route，也影响 write bridge 内部的实际接收。地址错误不会写坏 RAM。</p>
+<h2 id="9-11-外部-AXI4-端口与内部-DMA-端口"><a href="#9-11-外部-AXI4-端口与内部-DMA-端口" class="headerlink" title="9.11 外部 AXI4 端口与内部 DMA 端口"></a>9.11 外部 AXI4 端口与内部 DMA 端口</h2><p><code>pcie_memory_clt_top.v</code> 内部使用 <code>axi_dp_ram</code>，Port A 给内部 DMA，Port B 暴露为外部 AXI4：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">axi_dp_ram #(</span><br><span class="line">    <span class="variable">.DATA_WIDTH</span> (AXI_DATA_WIDTH),</span><br><span class="line">    <span class="variable">.ADDR_WIDTH</span> (RAM_ADDR_WIDTH),</span><br><span class="line">    <span class="variable">.ID_WIDTH</span>   (AXI_ID_WIDTH)</span><br><span class="line">) u_axi_dp_ram (</span><br><span class="line">    <span class="comment">// PORT A: Connected to internal AXI DMA</span></span><br><span class="line">    <span class="variable">.s_axi_a_awaddr</span> (dma_axi_awaddr[RAM_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>]),</span><br><span class="line">    <span class="variable">.s_axi_a_wdata</span>  (dma_axi_wdata),</span><br><span class="line">    <span class="variable">.s_axi_a_araddr</span> (dma_axi_araddr[RAM_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>]),</span><br><span class="line">    <span class="variable">.s_axi_a_rdata</span>  (dma_axi_rdata),</span><br><span class="line"></span><br><span class="line">    <span class="comment">// PORT B: Exposed to the external world</span></span><br><span class="line">    <span class="variable">.s_axi_b_awaddr</span> (ext_axi_awaddr),</span><br><span class="line">    <span class="variable">.s_axi_b_wdata</span>  (ext_axi_wdata),</span><br><span class="line">    <span class="variable">.s_axi_b_araddr</span> (ext_axi_araddr),</span><br><span class="line">    <span class="variable">.s_axi_b_rdata</span>  (ext_axi_rdata)</span><br><span class="line">);</span><br></pre></td></tr></table></figure>
+
+<p>Port A 的 DMA 地址只取低 <code>RAM_ADDR_WIDTH</code> 位：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.s_axi_a_awaddr</span> (dma_axi_awaddr[RAM_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>]),</span><br><span class="line"><span class="variable">.s_axi_a_araddr</span> (dma_axi_araddr[RAM_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>]),</span><br></pre></td></tr></table></figure>
+
+<p>这是和地址转换配套的。SSD 访问 <code>0x3000_2000</code>，bridge 先转成 offset <code>0x0000</code>，DMA 再访问 RAM 低 16 位地址。</p>
+<p><code>SSD_ctl.v</code> 中还保留了 <code>MEMORY_EXTERNAL_AXI_ENABLE</code> 门控。如果外部 AXI4 不启用，输入会被绑成 0，ready 相关回路保持可控：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.ext_axi_awvalid</span> (MEMORY_EXTERNAL_AXI_ENABLE ? ext_axi_awvalid : <span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.ext_axi_wvalid</span>  (MEMORY_EXTERNAL_AXI_ENABLE ? ext_axi_wvalid  : <span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.ext_axi_bready</span>  (MEMORY_EXTERNAL_AXI_ENABLE ? ext_axi_bready  : <span class="number">1&#x27;b1</span>),</span><br><span class="line"><span class="variable">.ext_axi_arvalid</span> (MEMORY_EXTERNAL_AXI_ENABLE ? ext_axi_arvalid : <span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.ext_axi_rready</span>  (MEMORY_EXTERNAL_AXI_ENABLE ? ext_axi_rready  : <span class="number">1&#x27;b1</span>)</span><br></pre></td></tr></table></figure>
+
+<p>当前上板测试中，外部 AXI4 由 <code>ssd_rw_test_ctrl.v</code> 驱动；后续如果接真实上层采集模块，也应接到这组 <code>ext_axi_*</code> 端口。</p>
+<h2 id="9-12-16KB-读写测试控制-ssd-rw-test-ctrl"><a href="#9-12-16KB-读写测试控制-ssd-rw-test-ctrl" class="headerlink" title="9.12 16KB 读写测试控制 ssd_rw_test_ctrl"></a>9.12 16KB 读写测试控制 ssd_rw_test_ctrl</h2><p><code>ssd_rw_test_ctrl.v</code> 是板级 16KB 闭环测试状态机。它一边作为 AXI-Lite master 写控制寄存器，一边作为 AXI4 master 读写 memory window 的外部端口。</p>
+<p>它暴露四个启动信号：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> write_start;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> write_start_command;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> read_start_command;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> read_start;</span><br></pre></td></tr></table></figure>
+
+<p>对应四个动作：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>动作</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>write_start</code></td>
+<td>通过 AXI4 向 source buffer 写入 16KB pattern</td>
+</tr>
+<tr>
+<td><code>write_start_command</code></td>
+<td>通过 AXI-Lite 触发 NVMe Write 命令</td>
+</tr>
+<tr>
+<td><code>read_start_command</code></td>
+<td>通过 AXI-Lite 触发 NVMe Read 命令</td>
+</tr>
+<tr>
+<td><code>read_start</code></td>
+<td>通过 AXI4 从 destination buffer 读出并比较 pattern</td>
+</tr>
+</tbody></table>
+<p>状态机主要状态如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_IDLE          = <span class="number">8&#x27;d0</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_WAIT_READY    = <span class="number">8&#x27;d1</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_AXI_WR_AW     = <span class="number">8&#x27;d2</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_AXI_WR_W      = <span class="number">8&#x27;d3</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_AXI_WR_B      = <span class="number">8&#x27;d4</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_CMD_SETUP     = <span class="number">8&#x27;d5</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_AXIL_REQ      = <span class="number">8&#x27;d6</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_AXIL_B        = <span class="number">8&#x27;d7</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_WAIT_WR_DONE  = <span class="number">8&#x27;d8</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_WAIT_RD_DONE  = <span class="number">8&#x27;d9</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_AXI_RD_AR     = <span class="number">8&#x27;d10</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_AXI_RD_R      = <span class="number">8&#x27;d11</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_DONE          = <span class="number">8&#x27;d12</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ST_FAIL          = <span class="number">8&#x27;d13</span>;</span><br></pre></td></tr></table></figure>
+
+<p>它的测试 pattern 是“数据等于地址”的变体，每个 32-bit lane 填当前 byte address 加 lane offset：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">function</span> [AXI_DATA_WIDTH-<span class="number">1</span>:<span class="number">0</span>] make_pattern;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">63</span>:<span class="number">0</span>] byte_addr;</span><br><span class="line">    <span class="keyword">integer</span> lane;</span><br><span class="line">    <span class="keyword">begin</span></span><br><span class="line">        make_pattern = &#123;AXI_DATA_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line">        <span class="keyword">for</span> (lane = <span class="number">0</span>; lane &lt; AXI_WORD_LANES; lane = lane + <span class="number">1</span>) <span class="keyword">begin</span></span><br><span class="line">            make_pattern[lane*<span class="number">32</span> +: <span class="number">32</span>] = byte_addr[<span class="number">31</span>:<span class="number">0</span>] + lane*<span class="number">4</span>;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">endfunction</span></span><br></pre></td></tr></table></figure>
+
+<p>写 source buffer 时按 4KB page 发 AXI burst：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> <span class="keyword">integer</span> PAGE_BYTES     = <span class="number">4096</span>;</span><br><span class="line"><span class="keyword">localparam</span> <span class="keyword">integer</span> AXI_BEATS_PAGE = PAGE_BYTES/AXI_STRB_WIDTH;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>]   AXI_PAGE_AWLEN = AXI_BEATS_PAGE - <span class="number">1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>在 256-bit AXI 下，<code>AXI_STRB_WIDTH = 32B</code>，所以每个 4KB page 需要：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">4096 / 32 = 128 beats</span><br><span class="line">AWLEN = 127</span><br></pre></td></tr></table></figure>
+
+<p>发 AXI-Lite 命令时，状态机会背靠背写一组寄存器：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">function</span> [<span class="number">11</span>:<span class="number">0</span>] axil_addr_for_index;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">3</span>:<span class="number">0</span>] index;</span><br><span class="line">    <span class="keyword">begin</span></span><br><span class="line">        <span class="keyword">case</span> (index)</span><br><span class="line">            <span class="number">4&#x27;d0</span>: axil_addr_for_index = REG_CMD_SOURCE_CTRL;</span><br><span class="line">            <span class="number">4&#x27;d1</span>: axil_addr_for_index = REG_CMD_CTRL;</span><br><span class="line">            <span class="number">4&#x27;d2</span>: axil_addr_for_index = REG_CMD_NSID;</span><br><span class="line">            <span class="number">4&#x27;d3</span>: axil_addr_for_index = REG_CMD_ADDR_LO;</span><br><span class="line">            <span class="number">4&#x27;d4</span>: axil_addr_for_index = REG_CMD_ADDR_HI;</span><br><span class="line">            <span class="number">4&#x27;d5</span>: axil_addr_for_index = REG_CMD_LBA_LO;</span><br><span class="line">            <span class="number">4&#x27;d6</span>: axil_addr_for_index = REG_CMD_LBA_HI;</span><br><span class="line">            <span class="number">4&#x27;d7</span>: axil_addr_for_index = REG_CMD_QUEUE_HINT;</span><br><span class="line">            <span class="keyword">default</span>: axil_addr_for_index = REG_CMD_START;</span><br><span class="line">        <span class="keyword">endcase</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">endfunction</span></span><br></pre></td></tr></table></figure>
+
+<p>对应的数据包括 opcode、NSID、地址、LBA、queue hint 和 start：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="number">4&#x27;d1</span>: axil_data_for_index = &#123;NLB_VALUE, cmd_opcode_reg, <span class="number">6&#x27;d0</span>, CMD_TYPE_IO&#125;;</span><br><span class="line"><span class="number">4&#x27;d2</span>: axil_data_for_index = <span class="number">32&#x27;d1</span>;</span><br><span class="line"><span class="number">4&#x27;d3</span>: axil_data_for_index = cmd_addr_reg[<span class="number">31</span>:<span class="number">0</span>];</span><br><span class="line"><span class="number">4&#x27;d4</span>: axil_data_for_index = cmd_addr_reg[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line"><span class="number">4&#x27;d5</span>: axil_data_for_index = TEST_LBA[<span class="number">31</span>:<span class="number">0</span>];</span><br><span class="line"><span class="number">4&#x27;d6</span>: axil_data_for_index = TEST_LBA[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line"><span class="number">4&#x27;d7</span>: axil_data_for_index = <span class="number">32&#x27;d1</span>;</span><br><span class="line"><span class="keyword">default</span>: axil_data_for_index = <span class="number">32&#x27;d1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>其中 <code>NLB_VALUE = TRANSFER_BYTES/512 - 1</code>，16KB 时为 31。写命令使用 source buffer 地址，读命令使用 destination buffer 地址：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">OP_WRITE_CMD: <span class="keyword">begin</span></span><br><span class="line">    cmd_opcode_reg &lt;= IO_WRITE;</span><br><span class="line">    cmd_addr_reg &lt;= SOURCE_ADDR;</span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">OP_READ_CMD: <span class="keyword">begin</span></span><br><span class="line">    cmd_opcode_reg &lt;= IO_READ;</span><br><span class="line">    cmd_addr_reg &lt;= DEST_ADDR;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>读回校验时，状态机会从 destination buffer 对应 offset 发 AXI read，并逐 beat 和 <code>make_pattern</code> 比较：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (m_axi_rdata != make_pattern(verify_beat_addr)) <span class="keyword">begin</span></span><br><span class="line">    compare_error_count &lt;= compare_error_count + <span class="number">1&#x27;b1</span>;</span><br><span class="line">    error_code &lt;= ERR_COMPARE;</span><br><span class="line">    test_fail &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这就是当前上板测速和正确性检查的最外层闭环。</p>
+<h2 id="9-13-地址映射与窗口关系"><a href="#9-13-地址映射与窗口关系" class="headerlink" title="9.13 地址映射与窗口关系"></a>9.13 地址映射与窗口关系</h2><p>当前默认地址规划如下：</p>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>地址&#x2F;大小</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>MEMORY_BASE_ADDRESS</code></td>
+<td><code>0x3000_2000</code></td>
+<td>memory window 起始地址</td>
+</tr>
+<tr>
+<td><code>MEMORY_WINDOW_SIZE</code></td>
+<td><code>64KB</code></td>
+<td>FPGA memory window 大小</td>
+</tr>
+<tr>
+<td><code>SOURCE_ADDR</code></td>
+<td><code>0x3000_2000</code></td>
+<td>16KB 写 SSD 的 source buffer</td>
+</tr>
+<tr>
+<td><code>DEST_ADDR</code></td>
+<td><code>0x3000_8000</code></td>
+<td>16KB 从 SSD 读回的 destination buffer</td>
+</tr>
+<tr>
+<td><code>PRP_LIST_BASE_ADDR</code></td>
+<td><code>0x9000_0000</code></td>
+<td>PRP List 虚拟窗口</td>
+</tr>
+</tbody></table>
+<p>source&#x2F;destination 在 64KB memory window 内：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">memory window: 0x3000_2000 ~ 0x3001_1fff</span><br><span class="line">source 16KB : 0x3000_2000 ~ 0x3000_5fff</span><br><span class="line">dest   16KB : 0x3000_8000 ~ 0x3000_bfff</span><br></pre></td></tr></table></figure>
+
+<p>二者之间留了间隔，不会互相覆盖。</p>
+<p>地址转换后的 RAM offset 是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">source offset = SOURCE_ADDR - MEMORY_BASE_ADDRESS = 0x0000</span><br><span class="line">dest offset   = DEST_ADDR   - MEMORY_BASE_ADDRESS = 0x6000</span><br></pre></td></tr></table></figure>
+
+<p>也就是说外部 AXI4 实际访问 <code>axi_dp_ram</code> 时，source 从 offset 0 开始，dest 从 offset <code>0x6000</code> 开始。PRP 模块给 SSD 的仍是绝对地址 <code>0x3000_2000</code> 或 <code>0x3000_8000</code>，由 memory bridge 在 SSD 访问时转换成 offset。</p>
+<p><code>CQ_route.v</code> 负责在进入 memory bridge 前先判断 memory window 命中：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> hit_memory_addr = memory_addr_ge_base &amp;&amp;</span><br><span class="line">    (memory_addr_offset &lt; memory_window_size_safe);</span><br><span class="line"></span><br><span class="line">hit_mem_wr_next = hit_memory_addr &amp;&amp; is_mem_wr;</span><br><span class="line">hit_mem_rd_next = hit_memory_addr &amp;&amp; is_mem_rd;</span><br></pre></td></tr></table></figure>
+
+<p>因此地址链路要保持一致：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">AXI-Lite command addr</span><br><span class="line">-&gt; PRP1/PRP2</span><br><span class="line">-&gt; SSD CQ MemRd/MemWr address</span><br><span class="line">-&gt; CQ_route memory hit</span><br><span class="line">-&gt; AXI_TLP_bridge address translate</span><br><span class="line">-&gt; axi_dp_ram offset</span><br></pre></td></tr></table></figure>
+
+<p>任何一处 base&#x2F;window 不一致，都可能表现为 SSD 命令卡住、数据写不到预期 buffer，或者读回 compare fail。</p>
+<h2 id="9-14-吞吐与计数器观察"><a href="#9-14-吞吐与计数器观察" class="headerlink" title="9.14 吞吐与计数器观察"></a>9.14 吞吐与计数器观察</h2><p><code>ssd_rw_test_ctrl.v</code> 提供了几个用于测速的计数器：</p>
+<table>
+<thead>
+<tr>
+<th>计数器</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>total_cycle_count</code></td>
+<td>当前动作整体 busy 周期</td>
+</tr>
+<tr>
+<td><code>fill_cycle_count</code></td>
+<td>AXI4 写 source buffer 的周期</td>
+</tr>
+<tr>
+<td><code>write_cmd_cycle_count</code></td>
+<td>从写 AXI-Lite 命令到 <code>io_wr_done_pulse</code> 的周期</td>
+</tr>
+<tr>
+<td><code>read_cmd_cycle_count</code></td>
+<td>从写 AXI-Lite 命令到 <code>io_rd_done_pulse</code> 的周期</td>
+</tr>
+<tr>
+<td><code>verify_cycle_count</code></td>
+<td>AXI4 读 destination buffer 并比较的周期</td>
+</tr>
+<tr>
+<td><code>completed_cmd_count</code></td>
+<td>已完成 NVMe IO 命令数</td>
+</tr>
+<tr>
+<td><code>compare_error_count</code></td>
+<td>数据比较错误次数</td>
+</tr>
+<tr>
+<td><code>write_byte_count</code></td>
+<td>AXI4 写入 source buffer 字节累计</td>
+</tr>
+<tr>
+<td><code>read_byte_count</code></td>
+<td>AXI4 读出 destination buffer 字节累计</td>
+</tr>
+</tbody></table>
+<p>吞吐可以按下面方式估算：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">AXI fill bandwidth  = TRANSFER_BYTES / fill_cycle_count / clk_period</span><br><span class="line">NVMe write latency  = write_cmd_cycle_count * clk_period</span><br><span class="line">NVMe read latency   = read_cmd_cycle_count * clk_period</span><br><span class="line">AXI verify bandwidth = TRANSFER_BYTES / verify_cycle_count / clk_period</span><br></pre></td></tr></table></figure>
+
+<p>如果使用 125MHz user clock，一个 cycle 是 8ns。16KB 写命令链路的粗略带宽可以按：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">bandwidth = 16384 bytes / (write_cmd_cycle_count * 8ns)</span><br></pre></td></tr></table></figure>
+
+<p>IOPS 则要按“每条命令大小”换算。如果每条命令固定 16KB：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">IOPS = 1 / (command_cycle_count * clk_period)</span><br><span class="line">bandwidth = IOPS * 16KB</span><br></pre></td></tr></table></figure>
+
+<p>如果测 4KB 随机读写，则每个 command 的 transfer size 改成 4KB，再用 completion 数量除以时间窗口统计 IOPS。当前 <code>ssd_rw_test_ctrl</code> 更偏 16KB 闭环正确性和单次延迟测试，持续压力 IOPS 统计需要在外层重复触发或另写连续命令压力状态机。</p>
+<h2 id="9-15-实现注意事项"><a href="#9-15-实现注意事项" class="headerlink" title="9.15 实现注意事项"></a>9.15 实现注意事项</h2><p>第一，AXI-Lite 的命令寄存器不是数据通路。它只负责提交命令参数，不能用来搬大块 payload。真正 payload 必须走 AXI4 memory window 和 PCIe MemRd&#x2F;MemWr。</p>
+<p>第二，<code>REG_CMD_START</code> 是命令快照点。写 start 之后，<code>nvme_axil_regs</code> 会把当时的 <code>cmd_ctrl/nsid/addr/lba/queue_hint</code> 打包成 pending descriptor。后续再改命令寄存器，不会影响已经 pending 的那条命令。</p>
+<p>第三，memory&#x2F;PRP base&#x2F;window 要保持配套。<code>CQ_route</code>、<code>AXI_TLP_bridge_rd/wr</code>、<code>prp_ctl</code> 都会使用 AXI-Lite 输出的 active 配置。如果只改一部分配置，地址链路会不一致。</p>
+<p>第四，当前 memory bridge 中 <code>ADDRESS_TRANSLATE_ENABLE = 1</code>。SSD 看到绝对地址，内部 RAM 使用 offset。调试 ILA 时要区分 <code>PRP1</code> 里的地址和 AXI RAM 端口上的地址。</p>
+<p>第五，<code>MAX_PAYLOAD_SIZE = 128B</code> 决定 read completion 分片上限。256-bit 数据宽度下 128B 是 4 个 beat。返回过小会增加 TLP header 开销，返回过大则可能超过 SSD&#x2F;IP 当前协商的 MPS。</p>
+<p>第六，外部 AXI4 和内部 DMA 同时访问同一个 <code>axi_dp_ram</code>。当前测试流程是先写 source，再发 SSD write；SSD read 完成后再读 dest 校验，避免了同一区域同时读写造成调试复杂度上升。后续真实数据流场景需要明确 buffer ownership 或做 ping-pong buffer。</p>
+<p>第七，<code>ssd_rw_test_ctrl</code> 的四个 start 信号不能同拍多路触发。源码中用 <code>start_edge_count</code> 检查，如果一次检测到多个 start edge，会进入 <code>ERR_MULTI_START</code>。这让 VIO 控制更清楚：一次只启动一个阶段。</p>
+<h2 id="9-16-章节总结"><a href="#9-16-章节总结" class="headerlink" title="9.16 章节总结"></a>9.16 章节总结</h2><p>AXI&#x2F;Memory 模块把 SSD 控制器的“命令控制”和“数据搬运”拆成两条清晰路径。AXI-Lite 负责寄存器配置、命令提交和状态回读；AXI4 负责真实数据缓存；PCIe memory bridge 负责把 SSD 对 PRP 地址的 MemRd&#x2F;MemWr 转换成 AXI RAM 读写。</p>
+<p>当前实现中，<code>axi_lite_ctl/nvme_axil_regs/cmd_source_mux</code> 构成控制面，<code>pcie_memory_clt_top/AXI_TLP_bridge/axi_dma/axi_dp_ram</code> 构成数据面。16KB 测试流程通过 <code>ssd_rw_test_ctrl</code> 串起 AXI4 写数据、AXI-Lite 发命令、SSD 访问 memory window、AXI4 读回校验这几个步骤。对当前板级读写闭环来说，这套结构已经能够表达标准 NVMe Host memory 语义：SSD 并不直接知道 FPGA 内部 RAM，只看到一段可以按 PRP 地址访问的 host memory window。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-09-axi-memory/" data-id="cmpfj66qs00002ki7aill8hns" data-title="FPGA NVMe Host 项目记录（九）：AXI 数据缓存与 PCIe Memory 访问" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+
+  
     <article id="post-fpga-nvme-host-08-prp-address" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
   <div class="article-meta">
     <a href="/2026/05/21/fpga-nvme-host-08-prp-address/" class="article-date">
@@ -4051,302 +4689,6 @@
 
 
   
-    <article id="post-board-debugging" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
-  <div class="article-meta">
-    <a href="/2026/01/20/board-debugging/" class="article-date">
-  <time class="dt-published" datetime="2026-01-20T02:23:31.000Z" itemprop="datePublished">2026-01-20</time>
-</a>
-    
-  </div>
-  <div class="article-inner">
-    
-    
-      <header class="article-header">
-        
-  
-    <h1 itemprop="name">
-      <a class="p-name article-title" href="/2026/01/20/board-debugging/">上板调试</a>
-    </h1>
-  
-
-      </header>
-    
-    <div class="e-content article-entry" itemprop="articleBody">
-      
-        <h2 id="枚举模块"><a href="#枚举模块" class="headerlink" title="枚举模块"></a>枚举模块</h2><h3 id="2026-01-20"><a href="#2026-01-20" class="headerlink" title="2026&#x2F;01&#x2F;20"></a>2026&#x2F;01&#x2F;20</h3><p>给扩展板卡上电，通过金手指进行供电，之后通过IP进行连接，连接结果如下：</p>
-<p><img src="/images/notion/board-debugging/image-01.png" alt="image 1"></p>
-<p>看见物理层训练结果肯定是没有训练完成，寻找原因，大概从时钟，配置方面，找到在IP配置上的原因，原文在BANK227中位于X0Y2和X0Y1，我这里选用的Y1，选用Y2之后再进行尝试，链路成功训练完成，linkup拉高，可以进行下一步</p>
-<p><img src="/images/notion/board-debugging/image-02.png" alt="image 2"></p>
-<h3 id="枚举验证"><a href="#枚举验证" class="headerlink" title="枚举验证"></a>枚举验证</h3><p>枚举没有通过，状态显示停留在02，也就是等待ID回复，通过ILA查看，看见发送了RQ信号，RC也进行了接收，RC的KEEP是07，数据也明显不对，RQ数据看起来应该是对的，但是USER数据明显不对，查看发现是USER数据是大小端不一样的，我以为是小端，实则是大端，更改顺序继续抓取数据。</p>
-<p><img src="/images/notion/board-debugging/image-03.png" alt="image 3"></p>
-<p><img src="/images/notion/board-debugging/image-04.png" alt="image 4"></p>
-<p>从{DW3210}更改为{DW0123}</p>
-<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> tlp_hdr_config = &#123;</span><br><span class="line">        <span class="comment">// DW 0 (Type + Length)</span></span><br><span class="line">        tlp_fmt_type[<span class="number">7</span>:<span class="number">5</span>],                                      <span class="comment">// Fmt</span></span><br><span class="line">        tlp_fmt_type[<span class="number">4</span>:<span class="number">0</span>],                                      <span class="comment">// Type</span></span><br><span class="line">        <span class="number">1&#x27;b0</span>, TLP_TC,                                           <span class="comment">// R, TC</span></span><br><span class="line">        <span class="number">1&#x27;b0</span>, TLP_Attr[<span class="number">2</span>],                                      <span class="comment">// R, Attr</span></span><br><span class="line">        <span class="number">1&#x27;b0</span>, <span class="number">1&#x27;b0</span>, <span class="number">1&#x27;b0</span>,                                       <span class="comment">// R, TH, TD</span></span><br><span class="line">        <span class="number">1&#x27;b0</span>, TLP_Attr[<span class="number">1</span>:<span class="number">0</span>],                                    <span class="comment">// EP, Attr</span></span><br><span class="line">        TLP_At,                                                 <span class="comment">// AT</span></span><br><span class="line">        tlp_length,                                              <span class="comment">// Length (10 bit)</span></span><br><span class="line">    </span><br><span class="line">        <span class="comment">// DW 1 (ReqID + Tag + BE)</span></span><br><span class="line">        TLP_REQ_ID,                                             <span class="comment">// Requester ID</span></span><br><span class="line">        tlp_tag,                                                <span class="comment">// Tag</span></span><br><span class="line">        tlp_last_be,                                            <span class="comment">// Last BE</span></span><br><span class="line">        tlp_first_be,                                           <span class="comment">// First BE    </span></span><br><span class="line">    </span><br><span class="line">        <span class="comment">// DW 2 (Address / BDF)</span></span><br><span class="line">        TLP_TARGET_BDF[<span class="number">15</span>:<span class="number">8</span>],                                   <span class="comment">// Bus</span></span><br><span class="line">        TLP_TARGET_BDF[<span class="number">7</span>:<span class="number">3</span>],                                    <span class="comment">// Dev</span></span><br><span class="line">        TLP_TARGET_BDF[<span class="number">2</span>:<span class="number">0</span>],                                    <span class="comment">// Func</span></span><br><span class="line">        <span class="number">4&#x27;b0000</span>,                                                <span class="comment">// Reserved</span></span><br><span class="line">        tlp_address[<span class="number">11</span>:<span class="number">2</span>],                                      <span class="comment">// Reg Index (DW aligned)</span></span><br><span class="line">        <span class="number">2&#x27;b00</span>,                                                  <span class="comment">// Reserved    </span></span><br><span class="line">    </span><br><span class="line">        <span class="comment">// DW 3 (Padding for alignment)</span></span><br><span class="line">        <span class="number">32&#x27;d0</span></span><br><span class="line">    &#125;;</span><br></pre></td></tr></table></figure>
-
-<p>现象：更改之后RQ有变化，但是RC抓不到数据</p>
-<p>TUSER看着没什么问题，抓一下DATA看看，更改之后还是不对</p>
-<p><img src="/images/notion/board-debugging/image-05.png" alt="image 5"></p>
-<p>DATA如下：</p>
-<p><img src="/images/notion/board-debugging/image-06.png" alt="image 6"></p>
-<p><code>**0000000000000000000000000000000000000001000040010100000000000000**</code></p>
-<p>现在的结果是：</p>
-<p><img src="/images/notion/board-debugging/image-07.png" alt="image 7"></p>
-<p>rc_data : 00000000000000000000000000000000a808144d000000010000000140040000</p>
-<p>tuser : 7fff9f718010000f000</p>
-<p>tkeep:0f</p>
-<p>现在的结果是抓到了ID号，说明发送出去的数据是正确的，但是RC的CPL只是通过IP的数据流返回了，并没有返回到我的端口中来，说明端口处数据流有地方有问题，需要再次抓取解决</p>
-<p>原来是开启了那个拼接模式，当包小的时候就开启，现在关闭拼接模式即可：</p>
-<p><img src="/images/notion/board-debugging/image-08.png" alt="image 8"></p>
-<p>抓取到的ID如下：a808144d</p>
-<p>现在表明最起码的硬盘ID通路，说明可以和硬盘进行正常沟通了，接下来按照枚举的操作进行枚举即可。</p>
-<p>读到了地址的掩码：</p>
-<p><img src="/images/notion/board-debugging/image-09.png" alt="image 9"></p>
-<p>这里的BAR0变成了1ffc004</p>
-<p><img src="/images/notion/board-debugging/image-10.png" alt="image 10"></p>
-<p>原来是ILA位宽不够了，增加位宽继续查看，没什么问题</p>
-<p>为了进一步排查原因，现在增加一个回读command状态机进行查看，</p>
-<p>现在应该是枚举成功，没有什么额外的问题了。</p>
-<p><img src="/images/notion/board-debugging/image-11.png" alt="image 11"></p>
-<p>可以看见寄存器都有值</p>
-<p><img src="/images/notion/board-debugging/image-12.png" alt="image 12"></p>
-<p>枚举模块成功，接下来是NVME初始化模块</p>
-<h2 id="NVME初始化"><a href="#NVME初始化" class="headerlink" title="NVME初始化"></a>NVME初始化</h2><p>卡在了状态2不动了，抓取信号看见是有信号进来的</p>
-<p><img src="/images/notion/board-debugging/image-13.png" alt="image 13"></p>
-<p>状态机不动说明跳转有问题，返回查看跳转条件，可能是tag的问题，抓取tag用来查看tag的最终结果，原来是这里忘记改大小端了，改为[47:40]即可。</p>
-<p><img src="/images/notion/board-debugging/image-14.png" alt="image 14"></p>
-<p>更改之后进行查看，果然成功了</p>
-<p><img src="/images/notion/board-debugging/image-15.png" alt="image 15"></p>
-<p><img src="/images/notion/board-debugging/image-16.png" alt="image 16"></p>
-<p>现在枚举和初始化都成功了，接下来就是队列的初始化和队列读写了</p>
-<p><img src="/images/notion/board-debugging/image-17.png" alt="image 17"></p>
-<h2 id="IO队列初始化"><a href="#IO队列初始化" class="headerlink" title="IO队列初始化"></a>IO队列初始化</h2><p>队列初始化主要是抓取命令和ID，发送RQ队列，接收CQ命令，发送CC命令</p>
-<h3 id="RQ调试"><a href="#RQ调试" class="headerlink" title="RQ调试"></a>RQ调试</h3><p>首先利用ASQ&#x2F;ACQ队列初始化IOSQ和IOCQ，首先观测ASQ的操作，发送RQ命令，接收CQ命令。发送CC结果，现在是RQ命令，发现valid信号拉高但是ready信号一直不拉高。因此需要进行查看ready信号的链路</p>
-<p><img src="/images/notion/board-debugging/image-18.png" alt="image 18"></p>
-<p>roundrobin模块正常输出</p>
-<p><img src="/images/notion/board-debugging/image-19.png" alt="image 19"></p>
-<p>仲裁模块正常输出</p>
-<p><img src="/images/notion/board-debugging/image-20.png" alt="image 20"></p>
-<p>可能是卡在了组TLP包的模块上，对该模块需要复查，继续添加ILA查看。</p>
-<p>runme.log一直报错Abnormal program termination (EXCEPTION_ACCESS_VIOLATION)，这个问题很奇怪，搜索出来是内存溢出，但是工作机64G内存也能干溢出？我觉得不太科学，之前和之后的改动是在改变了一些握手信号的逻辑和ILA，很可能是这些方面导致的，在一个网页上也看见了这个错误，必须进行更改，在删减掉所有ILA之后，这个错误没有了，说明就是ILA产生的错误，综合终于成功了，现在对ILA一个一个加入观测到底是哪里的问题。</p>
-<p><img src="/images/notion/board-debugging/image-21.png" alt="image 21"></p>
-<p>没找到哪里出问题了。。把所有ila去掉再综合就成功了，之后再加上ila就又可以了，这个问题非常奇怪，没有任何一个寄存器是不能抓取的。</p>
-<p>现在是RQ发送过去了，但是CQ却没有来读取数据的？很奇怪啊</p>
-<p><img src="/images/notion/board-debugging/image-22.png" alt="image 22"></p>
-<p>RQ发送的数据为0000000000000000000000000000000100000000000008010000000010001000</p>
-<p>keep为1F，tuser为00000000000000f。</p>
-<p>这个数据很可能有问题，写门铃CQ有问题，问题大概在写门铃的地址上，不然不可能不回复，很可能是写地址看成了CQ队列的地址了</p>
-<p>原来是写门铃地址是固定的，不是随着队列深度变化的，这里我理解的有问题，更改了地址之后进行数据抓取。</p>
-<h3 id="CQ调试"><a href="#CQ调试" class="headerlink" title="CQ调试"></a>CQ调试</h3><p>抓到了CQ的端口数据：</p>
-<p><img src="/images/notion/board-debugging/image-23.png" alt="image 23"></p>
-<p>cq_data:0000000000000000000000000000000000070000000000100000000020000000</p>
-<p>cq_tuser:1ffff7dee00100000000ff</p>
-<p>cq_tkeep:0f</p>
-<p>继续深入抓取数据：</p>
-<p><img src="/images/notion/board-debugging/image-24.png" alt="image 24"></p>
-<ul>
-<li><p><code>**cpl_fmt**</code>** &#x3D; 1 (<strong><code>**3&#39;b001**</code></strong>)**</p>
-<ul>
-<li><strong>含义</strong>：<strong>3DW Header, No Data</strong>。</li>
-<li>这表示这是一个不带数据的请求（也就是读请求），且使用 32 位地址。</li>
-</ul>
-</li>
-<li><p><code>**cpl_type**</code>** &#x3D; 0 (<strong><code>**5&#39;b00000**</code></strong>)**</p>
-<ul>
-<li><strong>含义</strong>：<strong>Memory Read &#x2F; Write</strong>。</li>
-<li>结合 <code>fmt=1</code> (No Data)，这确定无疑是一个 <strong>Memory Read (内存读请求)</strong>。</li>
-</ul>
-</li>
-<li><p><code>**cpl_lowaddress**</code>** &#x3D; <strong><code>**20000000**</code></strong> (Hex)**</p>
-<ul>
-<li><strong>含义</strong>：读取的目标地址。</li>
-<li><strong>分析</strong>：这正是你之前配置的 <strong>Admin SQ Base Address (</strong><code>**32&#39;h2000_0000**</code><strong>)</strong>。</li>
-<li><strong>结论</strong>：SSD 正在准确地访问你分配给它的队列内存。</li>
-</ul>
-</li>
-<li><p><code>**cpl_length**</code>** &#x3D; <strong><code>**010**</code></strong> (Hex)**</p>
-<ul>
-<li><p><strong>含义</strong>：请求读取的数据长度（单位是 Dword &#x2F; 4字节）。</p>
-</li>
-<li><p><strong>换算</strong>：Hex <code>010</code> &#x3D; Decimal 16。</p>
-</li>
-<li><p><strong>字节数</strong>：16×4 Bytes&#x3D;64 Bytes。<br>16×4 Bytes&#x3D;64 Bytes16 \times 4 \text{ Bytes} &#x3D; \mathbf{64 \text{ Bytes}}</p>
-</li>
-<li><p><strong>结论</strong>：<strong>64 字节正是 NVMe 一条命令的标准长度！</strong></p>
-</li>
-</ul>
-</li>
-</ul>
-<h3 id="RC调试"><a href="#RC调试" class="headerlink" title="RC调试"></a>RC调试</h3><p>目前看RQ,RC都是正常的指令，现在进入到RC，一直在端口没有抓取到RC的发出命令，可能是RC模块有问题，经排查，原来是自己把sys_clk写成了user_clk，晕，这么简单的错误。</p>
-<h3 id="CC调试"><a href="#CC调试" class="headerlink" title="CC调试"></a>CC调试</h3><p>ILA抓取CC端口，输出发现没有ready信号，由此没有到CC口，必须寻找该信号来源</p>
-<p><img src="/images/notion/board-debugging/image-25.png" alt="image 25"></p>
-<p>找到最后的原因了，是因为是中原写错了，下次不能再犯这种错误了，之后CC口发送成功</p>
-<p><img src="/images/notion/board-debugging/image-26.png" alt="image 26"></p>
-<h3 id="CQ端口—CQE命令"><a href="#CQ端口—CQE命令" class="headerlink" title="CQ端口—CQE命令"></a>CQ端口—CQE命令</h3><p>接下来就只能看CQE命令，也就是CQ端口的内容了，看CQlane中是抓取不到的，因此该命令没有分发到CQE中，说明要么是CC命令有问题，要么是地址分发有问题，对二者分别进行查看，</p>
-<p>CQlane中没有收到CQ的命令，说明是地址分发有问题，对地址分发进行查看，发现地址分发没有数据，说明前面有问题，要么是CC命令有问题，要么是CQ端口接收有问题，但是又出现了刚才的问题，综合报错，将ILA注释无果，于是认真按照警告进行更改，终于知道了原来是位宽不匹配报错</p>
-<p>一直查询结果无果，现在从每一个端口进行查找，发现是CC端口TLP包头没有数据，一直是0，源头查找到TLP包头，发现是忘记声明位宽了，现在赋值位宽即可。</p>
-<p><img src="/images/notion/board-debugging/image-27.png" alt="image 27"></p>
-<p>现在CC端口发骚那个成功了。得到CQ端口回应的CQE数据如下：</p>
-<p><img src="/images/notion/board-debugging/image-28.png" alt="image 28"></p>
-<p>ACQ_rx_req_tlp_hdr_reg[127:0]：</p>
-<p>60000004000000ff0000000020001000</p>
-<p>ACQ_rx_req_tlp_data_reg[255:0]：0007000000000010000000002000000040170000000000010000000000000000</p>
-<p>解析如下：</p>
-<ul>
-<li><p>**DW0: **<code>**60000004**</code></p>
-<ul>
-<li><code>Fmt</code> &#x3D; <code>011</code> (4DW 头，<strong>带数据</strong>)</li>
-<li><code>Type</code> &#x3D; <code>00000</code> (<strong>Memory Write</strong>)</li>
-<li><code>Length</code> &#x3D; <code>0x004</code> (<strong>4 个 DWord &#x3D; 16 字节</strong>)</li>
-<li><strong>含义：SSD 发起了一个 DMA 内存写操作，写入长度恰好是 16 字节（标准的 1 个 NVMe CQE 大小）。</strong></li>
-</ul>
-</li>
-<li><p>**DW1: **<code>**000000ff**</code></p>
-<ul>
-<li><code>Requester ID</code> &#x3D; <code>0x0000</code> (SSD 控制器本身的 ID)</li>
-<li><code>First BE</code> &#x2F; <code>Last BE</code> &#x3D; <code>f</code> &#x2F; <code>f</code> (4个DWord全部有效)</li>
-</ul>
-</li>
-<li><p>**DW2: **<code>**00000000**</code> (64位物理地址的高 32 位)</p>
-</li>
-<li><p>**DW3: **<code>**20001000**</code> (64位物理地址的低 32 位)</p>
-<ul>
-<li><strong>含义：SSD 精准地将回信写到了你指定的 <strong><code>**ADMIN_CQ_ADDRESS**</code></strong> (</strong><code>**0x20001000**</code><strong>) 处！</strong></li>
-</ul>
-</li>
-</ul>
-<ol start="2">
-<li>解析 TLP Data (NVMe 完成包 CQE)</li>
-</ol>
-<p><code>**ACQ_rx_req_tlp_data_reg = [垃圾数据] 40170000 00000001 00000000 00000000**</code></p>
-<p>因为 Length 是 4 DW，所以 256-bit 总线上只有低 128-bit (最右边的 4 个 DWord) 是有效的 CQE 数据。我们按小端序（右边是 DW0）拆解：</p>
-<ul>
-<li>**DW0: **<code>**00000000**</code> (Command Specific，通常为 0)</li>
-<li>**DW1: **<code>**00000000**</code> (Reserved)</li>
-<li>**DW2: **<code>**00000001**</code> (<strong>SQ Head Pointer &amp; SQ Identifier</strong>)<ul>
-<li><code>SQ Identifier</code> &#x3D; <code>0</code> (这是 Admin SQ)</li>
-<li><code>SQ Head Pointer</code> [15:0] &#x3D; <code>1</code></li>
-<li><strong>含义：SSD 告诉你：“Admin 队列里索引为 0 的那个命令，我已经取走并执行完了，现在我的 Head 指针移动到 1 了。”</strong></li>
-</ul>
-</li>
-</ul>
-<p>最关键的 DW3: <code>40170000</code> (状态与结果)</p>
-<p>这个词包含了命令的执行结果，我们将 <code>4017</code>（高16位）转为二进制：<br><code>0100_0000_0001_0111</code></p>
-<p>根据 NVMe 协议对应位段：</p>
-<ul>
-<li><code>**CID**</code>** (Command ID) [15:0]**: <code>0000</code> (回应你 CID&#x3D;0 的那条命令)</li>
-<li><code>**P**</code>** (Phase Tag) [16]<strong>: <code>1</code> (这是最低位的 <code>1</code>。代表这个 CQE 是</strong>最新有效**的！)</li>
-<li><code>**SC**</code>** (Status Code)**: <code>00001011</code> &#x3D; 11 &#x3D; <code>**0x0B**</code></li>
-<li><code>**SCT**</code>** (Status Code Type)**: <code>000</code> (Generic Command Status)</li>
-<li><code>**M**</code>** (More Bit) [30]**: <code>1</code> (表示有更多的错误日志可以读取)</li>
-</ul>
-<p><strong>结论：SSD 拒绝了你的命令，报错代码是 Generic Status <strong><code>**0x0B**</code></strong>。</strong></p>
-<p>经过更改之后的CQE已经正确了：</p>
-<p>hdr:60000004000000ff0000000020001000</p>
-<p>data:0007000000000010000000002000000000010000000000010000000000000000</p>
-<p>但是CQ队列没有收到VALID，说明前一级出问题了。还得去看看，果然是大端小端的问题，现在问题解决了，队列初始化已经完成：</p>
-<p><img src="/images/notion/board-debugging/image-29.png" alt="image 29"></p>
-<h2 id="IO队列传输数据"><a href="#IO队列传输数据" class="headerlink" title="IO队列传输数据"></a>IO队列传输数据</h2><p>现在IO队列开始之后利用刚才的程序，CQ队列是没有反应的，因此需要先看IOSQ队列是否有问题，因此抓取RQ,CQ的端口，看写门铃和都回的操作是否有问题。</p>
-<p>IO队列实行后抓取到一个很诧异地情况，就是CQE回到的ACQ中，而且数据是0007ffff000000020000000000000000，这说明门铃写错了，一看果然是门铃有问题，</p>
-<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">//Doorbell?Address=BAR0_Base_Addr+0x1000+(QID×2×4)+(Type×4) TYPE:SQ 0 CQ 1</span></span><br><span class="line">    <span class="comment">// tlp_low_mem_adress = BAR0_BASE_ADDR + 16&#x27;h1000 + QUEUE_TYPE &lt;&lt; 3 ;                   // ID Register</span></span><br><span class="line">    tlp_low_mem_adress = BAR0_BASE_ADDR + <span class="number">16&#x27;h1000</span> ;                   <span class="comment">// ID Register</span></span><br></pre></td></tr></table></figure>
-
-<p>修改了这个问题之后还是IOSQ没有收到东西，继续查询觉得可能是数据有问题：</p>
-<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] tlp_addr = rx_req_tlp_hdr[<span class="number">95</span>:<span class="number">64</span>];</span><br></pre></td></tr></table></figure>
-
-<p>强制绑定了地址，而且不管3DW，还是4DW，低位才是最后的地址才对，所以这里出错了，必须得到修正。</p>
-<p>而且经过仿真与查询，TLP的BYTECOUNT是十一位宽的数据，但是如果一次性传4096就会造成错误，因此必须在内部赋值为12位宽，然后外侧改为11位宽才是正确的做法，这样做可以得到正确的仿真结果，每一次传输128字节数据</p>
-<p><img src="/images/notion/board-debugging/image-30.png" alt="image 30"></p>
-<p>对于这个模块，还需要优化的地方如下：</p>
-<ol>
-<li>所有的读取请求地址，<strong>必须是 32 字节（256-bit）对齐的</strong>（即地址的最低 5 位永远是 <code>00000</code>）。</li>
-<li>所有的单次读取请求长度，<strong>不要跨越 4KB 边界</strong>。</li>
-</ol>
-<h3 id="RQ写SQ队列门铃"><a href="#RQ写SQ队列门铃" class="headerlink" title="RQ写SQ队列门铃"></a>RQ写SQ队列门铃</h3><p><img src="/images/notion/board-debugging/image-31.png" alt="image 31"></p>
-<p>hdr:400000010000000f000000001000100</p>
-<h3 id="CQ口接受的数据"><a href="#CQ口接受的数据" class="headerlink" title="CQ口接受的数据"></a>CQ口接受的数据</h3><p><img src="/images/notion/board-debugging/image-32.png" alt="image 32"></p>
-<h3 id="CC口发送的数据"><a href="#CC口发送的数据" class="headerlink" title="CC口发送的数据"></a>CC口发送的数据</h3><p>现在CC口发送NVME命令成功了，但是CQ队列没有收到回复，因此查看这里是否有错误。</p>
-<p>hdr:4a000010000000400000000000000000</p>
-<p>data1:0000000030002000000000000000000000000000000000000000000100020001</p>
-<p>data2:0000000000000000000000000000000000000000000000640000000000000000</p>
-<p><img src="/images/notion/board-debugging/image-33.png" alt="image 33"></p>
-<h3 id="找到SSD给CQ口的数据"><a href="#找到SSD给CQ口的数据" class="headerlink" title="找到SSD给CQ口的数据"></a>找到SSD给CQ口的数据</h3><p><img src="/images/notion/board-debugging/image-34.png" alt="image 34"></p>
-<p>这里的ready好像没有拉起来，观察数据内容</p>
-<p>hdr:20000020000000ff0000000030002000</p>
-<p>data：0007000100000020000000003000208000000000000000000000000000000000</p>
-<p>这里有一个reg，大位宽的寄存器注意是打了一拍的，和1位的延迟一周期，仿真也没什么问题，这就很奇怪了，rd_memory里面的内容cc_tx都抓取不到，但是CQroute能抓进入rd_memory的内容，很奇怪，为什么没有输出呢？怀疑是地址有问题，但是地址是通过参数传递进去的，于是重新抓取rd_memory的进入hdr看看是否能抓取到相关内容</p>
-<p><img src="/images/notion/board-debugging/image-35.png" alt="image 35"></p>
-<p>这里能看见rd_memory传入了正常的数据，但是其他都是0，没有正常进行检测，很奇怪啊这个问题</p>
-<p><img src="/images/notion/board-debugging/image-36.png" alt="image 36"></p>
-<p>hdr是打了一拍的，值为20000020000000ff0000000030002000</p>
-<p>我懂了，因为下游是仲裁器，必须等valid拉高来检测总线上是否有数据正在传输，所以上游得等待，而这逻辑又是必须等待下游ready拉高才进行的，这里是错误的。</p>
-<p>“A transmitter is not permitted to wait until TREADY is asserted before asserting TVALID.”</p>
-<p>valid不能等待ready信号，我这写错了。</p>
-<p>重新调整了一下并写了一个仿真如下：</p>
-<p>能够正常工作</p>
-<p><img src="/images/notion/board-debugging/image-37.png" alt="image 37"></p>
-<p>现在数据是发送了，但是一直在发送，没有停止的意思，肯定是哪个地方搞错了，这个最下面的valid一直为1，需要进行查证为什么一直为1</p>
-<p><img src="/images/notion/board-debugging/image-38.png" alt="image 38"></p>
-<p>原来是CC包封装反了，修改之后又有一个问题，为什么只能分128B来发，查询之后的来是协商的结果，虽然在硬核中设置了512B，但是因为硬件限制，只能协商到128B，但是我硬核设置为512B，并且SSD的寄存器也设置为51B的，这就很奇怪</p>
-<p><img src="/images/notion/board-debugging/image-39.png" alt="image 39"></p>
-<p>这里终于通过CC口发送出去了，但是cq口没有CQE回来，是个问题</p>
-<p><img src="/images/notion/board-debugging/image-40.png" alt="image 40"></p>
-<p>这里终于正确了</p>
-<p><img src="/images/notion/board-debugging/image-41.png" alt="image 41"></p>
-<h3 id="CC口数据抓取"><a href="#CC口数据抓取" class="headerlink" title="CC口数据抓取"></a>CC口数据抓取</h3><p><img src="/images/notion/board-debugging/image-42.png" alt="image 42"></p>
-<p>HDR：4a000020000000800000000000000000</p>
-<p>4a000020000000800000000000000100</p>
-<p>4a000020000000800000000000000200</p>
-<p>4a000020000000800000000000000300</p>
-<p>RQ：20000020000003ff0000000030002180</p>
-<p>仍然没收到回复，改变CPLD的头为这样再次进行常识：</p>
-<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> tlp_cpld = &#123;</span><br><span class="line">        <span class="comment">// DW 0 (Type + Length)</span></span><br><span class="line">        tlp_fmt_type[<span class="number">7</span>:<span class="number">5</span>],                                      <span class="comment">// Fmt</span></span><br><span class="line">        tlp_fmt_type[<span class="number">4</span>:<span class="number">0</span>],                                      <span class="comment">// Type</span></span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*R*/</span>, <span class="number">3&#x27;b000</span> <span class="comment">/*TC*/</span>, </span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*R*/</span>, <span class="number">1&#x27;b0</span> <span class="comment">/*Attr2*/</span>, </span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*R*/</span>, <span class="number">1&#x27;b0</span> <span class="comment">/*TH*/</span>, <span class="number">1&#x27;b0</span> <span class="comment">/*TD*/</span>, </span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*EP*/</span>, <span class="number">2&#x27;b00</span> <span class="comment">/*Attr1:0*/</span>, </span><br><span class="line">        <span class="number">2&#x27;b00</span> <span class="comment">/*AT*/</span>, </span><br><span class="line">        tlp_length,</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">        <span class="comment">// DW 1 (ReqID + Tag + BE)</span></span><br><span class="line">        cpld_completer_ID,                                      <span class="comment">// cpld_completer_ID</span></span><br><span class="line">        <span class="number">3&#x27;b000</span> <span class="comment">/*Status:Success*/</span>,                              <span class="comment">// cpld_status</span></span><br><span class="line">        <span class="number">1&#x27;b0</span> <span class="comment">/*BCM*/</span>,                                           <span class="comment">// BCM</span></span><br><span class="line">        cpld_byte_count,             <span class="comment">// cpld_byte_count</span></span><br><span class="line"></span><br><span class="line">        <span class="comment">// DW 2 (Address / BDF)</span></span><br><span class="line">        cpld_requester_ID,                                      <span class="comment">//cpld_requester_ID</span></span><br><span class="line">        cpld_tag,                                               <span class="comment">//cpld_tag</span></span><br><span class="line">        <span class="number">1&#x27;d0</span>,                                                   <span class="comment">// Reserved</span></span><br><span class="line">        cpld_lower_adress,                                      <span class="comment">//cpld_lower_adress</span></span><br><span class="line"></span><br><span class="line">        <span class="comment">// DW 3 (Padding for alignment)</span></span><br><span class="line">        <span class="number">32&#x27;d0</span></span><br><span class="line">    &#125;;</span><br></pre></td></tr></table></figure>
-
-<p>怀疑是3DW和4DW的区别，将DW2和DW3调换位置继续尝试，但是这次发送的CC口的HDR居然没有tag出现，这很诡异，不知道为什么，四个包每个包都是：</p>
-<p>4a000020000000800000000000000000</p>
-<p>而请求的包是：这是正确的，tag和地址均在变化</p>
-<p>20000020000000ff0000000030002000</p>
-<p>20000020000001ff0000000030002080</p>
-<p>20000020000002ff0000000030002100</p>
-<p>20000020000003ff0000000030002180</p>
-<p>怀疑是布线问题，重新布线再次生成进行尝试。</p>
-<p>现在生成的结果：</p>
-<p>4a000020000000800000000000000000</p>
-<p>4a000020000000800000010000000000</p>
-<p>4a000020000000800000020000000000</p>
-<p>4a000020000000800000030000000000</p>
-<p>仍然没有CQE命令回来</p>
-<p><img src="/images/notion/board-debugging/image-43.png" alt="image 43"></p>
-<p>4a000020010000800000000000000000</p>
-<p>4a000020010000800000010000000000</p>
-<p>4a000020010000800000020000000000</p>
-<p>4a000020010000800000030000000000</p>
-<p><img src="/images/notion/board-debugging/image-44.png" alt="image 44"></p>
-<p>CQE data:00f0000300000020000000003000218000010002000100010000000000000000</p>
-<p>rx_req_tlp_strb_reg[7:0]0f</p>
-<p>CQE HDR : 60000004 000000ff 00000000 20003000</p>
-<p><img src="/images/notion/board-debugging/image-45.png" alt="image 45"></p>
-<p>发现一直不给信号的原因如下所示，找到了原因就可以拿到CQE信号了，可以接下来的步骤了。</p>
-<p>现在基本的读写已经完成了，基本的NVME已经完成，读SSD如下所示</p>
-<p><img src="/images/notion/board-debugging/image-46.png" alt="image 46"></p>
-<p>状态机如下，所有都成功了。</p>
-<p><img src="/images/notion/board-debugging/image-47.png" alt="image 47"></p>
-<p><img src="/images/notion/board-debugging/image-48.png" alt="image 48"></p>
-<p><img src="/images/notion/board-debugging/image-49.png" alt="image 49"></p>
-
-      
-    </div>
-    <footer class="article-footer">
-      <a data-url="https://seattlice.github.io/2026/01/20/board-debugging/" data-id="cmo9kurgv0000xki7aizd9ula" data-title="上板调试" class="article-share-link"><span class="fa fa-share">分享</span></a>
-      
-      
-      
-    </footer>
-  </div>
-  
-</article>
-
-
-
-  
 
 
   <nav id="page-nav">
@@ -4404,6 +4746,10 @@
       <ul>
         
           <li>
+            <a href="/2026/05/21/fpga-nvme-host-09-axi-memory/">FPGA NVMe Host 项目记录（九）：AXI 数据缓存与 PCIe Memory 访问</a>
+          </li>
+        
+          <li>
             <a href="/2026/05/21/fpga-nvme-host-08-prp-address/">FPGA NVMe Host 项目记录（八）：PRP 地址管理</a>
           </li>
         
@@ -4417,10 +4763,6 @@
         
           <li>
             <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</a>
-          </li>
-        
-          <li>
-            <a href="/2026/05/21/fpga-nvme-host-05-init-queue/">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</a>
           </li>
         
       </ul>

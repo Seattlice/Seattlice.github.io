@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="650" viewBox="0 0 1180 650" role="img" aria-labelledby="title desc">
+  <title id="title">AXI-Lite and AXI memory flow</title>
+  <desc id="desc">AXI-Lite register control and AXI4 data memory window flow.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.4; rx: 8; ry: 8; }
+      .axil { fill: #eff6ff; }
+      .axi { fill: #fff7ed; }
+      .mem { fill: #f0fdf4; }
+      .tlp { fill: #f8fafc; }
+      .box-title { font-size: 16px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .mono { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12px; fill: #334155; }
+      .lane { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 7 6; }
+      .tag { font-size: 13px; fill: #0369a1; font-weight: 700; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="1180" height="650" fill="#ffffff"/>
+  <text x="44" y="48" class="title">AXI-Lite / AXI4 / PCIe Memory Window 数据接口</text>
+  <text x="44" y="75" class="subtitle">AXI-Lite 做控制和状态，AXI4 做真实数据缓存，SSD 通过 PCIe CQ/CC 访问同一 memory window</text>
+
+  <rect x="60" y="125" width="250" height="125" class="box axil"/>
+  <text x="84" y="158" class="box-title">AXI-Lite 控制面</text>
+  <text x="84" y="186" class="small">命令寄存器 / start</text>
+  <text x="84" y="211" class="small">queue / memory / PRP 配置</text>
+  <text x="84" y="236" class="small">done / error / watchdog 状态</text>
+
+  <rect x="410" y="125" width="250" height="125" class="box axil"/>
+  <text x="434" y="158" class="box-title">axi_lite_ctl</text>
+  <text x="434" y="186" class="small">nvme_axil_regs</text>
+  <text x="434" y="211" class="small">cmd_source_mux</text>
+  <text x="434" y="236" class="small">输出 cfg 和 cmd</text>
+
+  <rect x="785" y="125" width="250" height="125" class="box tlp"/>
+  <text x="809" y="158" class="box-title">SSD_ctl 内部模块</text>
+  <text x="809" y="186" class="small">PRP / Command / Queue</text>
+  <text x="809" y="211" class="small">Memory / CQ_route</text>
+  <text x="809" y="236" class="small">done/error 回读</text>
+
+  <rect x="60" y="370" width="250" height="125" class="box axi"/>
+  <text x="84" y="403" class="box-title">外部 AXI4 数据面</text>
+  <text x="84" y="431" class="small">测试 FSM 写 source buffer</text>
+  <text x="84" y="456" class="small">测试 FSM 读 destination buffer</text>
+  <text x="84" y="481" class="mono">256-bit, 32B/beat</text>
+
+  <rect x="410" y="370" width="250" height="125" class="box mem"/>
+  <text x="434" y="403" class="box-title">pcie_memory_clt_top</text>
+  <text x="434" y="431" class="small">AXI_TLP_bridge</text>
+  <text x="434" y="456" class="small">axi_dma + dual-port AXI RAM</text>
+  <text x="434" y="481" class="mono">window size = 64KB</text>
+
+  <rect x="785" y="370" width="250" height="125" class="box tlp"/>
+  <text x="809" y="403" class="box-title">SSD 通过 PCIe 访问</text>
+  <text x="809" y="431" class="small">MemRd：读写入 SSD 的数据</text>
+  <text x="809" y="456" class="small">MemWr：写回从 SSD 读出的数据</text>
+  <text x="809" y="481" class="small">CplD：返回 MemRd data</text>
+
+  <path d="M310 187 C350 187 370 187 408 187" class="lane"/>
+  <path d="M660 187 C705 187 735 187 783 187" class="lane"/>
+  <path d="M310 432 C350 432 370 432 408 432" class="lane"/>
+  <path d="M660 432 C705 432 735 432 783 432" class="lane"/>
+  <path d="M910 370 C910 315 910 280 910 252" class="lane dash"/>
+  <path d="M535 250 C535 305 535 340 535 368" class="lane dash"/>
+
+  <text x="320" y="170" class="tag">register write/read</text>
+  <text x="315" y="415" class="tag">AXI burst</text>
+  <text x="682" y="415" class="tag">CQ/CC TLP</text>
+</svg>
