@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+  
+  <title>FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流 | LI HUALOU</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="本章重点解释 RQ、RC、CQ、CC 在当前工程里的方向和用途。这里的“方向”要从 FPGA 用户逻辑视角理解。   目录 4.1 四通道一句话区分 4.2 四通道和 TLP 类型的关系 4.3 RQ：Requester Request 4.4 RC：Requester Completion 4.5 CQ：Completer Request 4.6 CC：Completer Completion">
+<meta property="og:type" content="article">
+<meta property="og:title" content="FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流">
+<meta property="og:url" content="https://seattlice.github.io/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/index.html">
+<meta property="og:site_name" content="LI HUALOU">
+<meta property="og:description" content="本章重点解释 RQ、RC、CQ、CC 在当前工程里的方向和用途。这里的“方向”要从 FPGA 用户逻辑视角理解。   目录 4.1 四通道一句话区分 4.2 四通道和 TLP 类型的关系 4.3 RQ：Requester Request 4.4 RC：Requester Completion 4.5 CQ：Completer Request 4.6 CC：Completer Completion">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/4-pcie-tlp-channels.svg">
+<meta property="article:published_time" content="2026-05-20T16:20:00.000Z">
+<meta property="article:modified_time" content="2026-05-20T16:20:00.000Z">
+<meta property="article:author" content="LI HUALOU">
+<meta property="article:tag" content="NVMe">
+<meta property="article:tag" content="PCIe">
+<meta property="article:tag" content="FPGA">
+<meta property="article:tag" content="RTL">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://seattlice.github.io/images/nvme-host/4-pcie-tlp-channels.svg">
+  
+    <link rel="alternate" href="/atom.xml" title="LI HUALOU" type="application/atom+xml">
+  
+  
+    <link rel="shortcut icon" href="/favicon.png">
+  
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+    
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+
+  
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fork-awesome@1.2.0/css/fork-awesome.min.css">
+
+<meta name="generator" content="Hexo 7.3.0"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">LI HUALOU</a>
+      </h1>
+      
+        <h2 id="subtitle-wrap">
+          <a href="/" id="subtitle">HUALOU</a>
+        </h2>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+        
+          <a class="nav-icon" href="/atom.xml" title="RSS 订阅"><span class="fa fa-rss"></span></a>
+        
+        <a class="nav-icon nav-search-btn" title="搜索"><span class="fa fa-search"></span></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="搜索"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="https://seattlice.github.io"></form>
+      </div>
+    </div>
+  </div>
+</header>
+
+      <div class="outer">
+        <section id="main"><article id="post-fpga-nvme-host-04-pcie-tlp-flow" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T16:20:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="p-name article-title" itemprop="headline name">
+      FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>本章重点解释 RQ、RC、CQ、CC 在当前工程里的方向和用途。这里的“方向”要从 FPGA 用户逻辑视角理解。</p>
+</blockquote>
+<p><img src="/images/nvme-host/4-pcie-tlp-channels.svg" alt="图 4-1 PCIe RQ&#x2F;RC&#x2F;CQ&#x2F;CC 四通道方向图"></p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#4-1-%E5%9B%9B%E9%80%9A%E9%81%93%E4%B8%80%E5%8F%A5%E8%AF%9D%E5%8C%BA%E5%88%86">4.1 四通道一句话区分</a></li>
+<li><a href="#4-2-%E5%9B%9B%E9%80%9A%E9%81%93%E5%92%8C-TLP-%E7%B1%BB%E5%9E%8B%E7%9A%84%E5%85%B3%E7%B3%BB">4.2 四通道和 TLP 类型的关系</a></li>
+<li><a href="#4-3-RQRequester-Request">4.3 RQ：Requester Request</a></li>
+<li><a href="#4-4-RCRequester-Completion">4.4 RC：Requester Completion</a></li>
+<li><a href="#4-5-CQCompleter-Request">4.5 CQ：Completer Request</a></li>
+<li><a href="#4-6-CCCompleter-Completion">4.6 CC：Completer Completion</a></li>
+<li><a href="#4-7-%E5%9B%9B%E9%80%9A%E9%81%93%E5%9C%A8%E5%B7%A5%E7%A8%8B%E4%B8%AD%E7%9A%84%E6%B1%87%E8%81%9A%E5%92%8C%E5%88%86%E5%8F%91">4.7 四通道在工程中的汇聚和分发</a></li>
+<li><a href="#4-8-16KB-Write-%E4%B8%AD%E5%9B%9B%E9%80%9A%E9%81%93%E7%9A%84%E5%AE%9E%E9%99%85%E4%BD%BF%E7%94%A8">4.8 16KB Write 中四通道的实际使用</a></li>
+<li><a href="#4-9-16KB-Read-%E4%B8%AD%E5%9B%9B%E9%80%9A%E9%81%93%E7%9A%84%E5%AE%9E%E9%99%85%E4%BD%BF%E7%94%A8">4.9 16KB Read 中四通道的实际使用</a></li>
+<li><a href="#4-10-ILA-%E8%A7%82%E6%B5%8B%E5%92%8C%E8%B7%AF%E5%BE%84%E5%88%A4%E6%96%AD">4.10 ILA 观测和路径判断</a></li>
+<li><a href="#4-11-readyvalid-%E5%92%8C%E6%B5%81%E6%8E%A7%E5%85%B3%E7%B3%BB">4.11 ready&#x2F;valid 和流控关系</a></li>
+<li><a href="#4-12-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">4.12 章节总结</a></li>
+</ul>
+<h2 id="4-1-四通道一句话区分"><a href="#4-1-四通道一句话区分" class="headerlink" title="4.1 四通道一句话区分"></a>4.1 四通道一句话区分</h2><figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">RQ：FPGA 作为 requester，主动向 SSD 发请求。</span><br><span class="line">RC：SSD 对 FPGA requester 请求返回 completion。</span><br><span class="line">CQ：SSD 作为 requester，主动访问 FPGA 地址空间。</span><br><span class="line">CC：FPGA 作为 completer，响应 SSD 的 non-posted request。</span><br></pre></td></tr></table></figure>
+
+<p>更简洁地说：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">RQ/RC：FPGA 主动访问 SSD 时使用。</span><br><span class="line">CQ/CC：SSD 主动访问 FPGA 时使用。</span><br></pre></td></tr></table></figure>
+
+<p>这个项目里最容易混淆的是 CQ 和 CC。CQ 不是 completion queue，CC 也不是 command completion。它们是 Xilinx PCIe IP 的 AXI-Stream 接口名称：</p>
+<ul>
+<li><code>m_axis_cq</code> &#x2F; CQ：Completer Request。</li>
+<li><code>s_axis_cc</code> &#x2F; CC：Completer Completion。</li>
+</ul>
+<p>NVMe 里的 CQ 是 Completion Queue，和 PCIe IP 的 CQ 不是同一个概念。</p>
+<h2 id="4-2-四通道和-TLP-类型的关系"><a href="#4-2-四通道和-TLP-类型的关系" class="headerlink" title="4.2 四通道和 TLP 类型的关系"></a>4.2 四通道和 TLP 类型的关系</h2><p>从 PCIe Transaction Layer 看，真正在线路上传输的是 TLP。RQ&#x2F;RC&#x2F;CQ&#x2F;CC 是 Xilinx PCIe IP 在用户逻辑侧划出来的四条 AXI-Stream 通道。</p>
+<p>当前项目中常见 TLP 类型可以这样归类：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>TLP 类型</th>
+<th>出现通道</th>
+<th>是否需要 completion</th>
+<th>当前用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>配置空间读取</td>
+<td>CfgRd</td>
+<td>RQ</td>
+<td>需要 RC</td>
+<td>枚举、读取 Vendor ID、Class Code、BAR</td>
+</tr>
+<tr>
+<td>配置空间写入</td>
+<td>CfgWr</td>
+<td>RQ</td>
+<td>一般不返回数据</td>
+<td>BAR 分配、Command Register 使能</td>
+</tr>
+<tr>
+<td>FPGA 读 SSD BAR</td>
+<td>MemRd</td>
+<td>RQ</td>
+<td>需要 RC</td>
+<td>读取 NVMe CAP、CSTS 等寄存器</td>
+</tr>
+<tr>
+<td>FPGA 写 SSD BAR</td>
+<td>MemWr</td>
+<td>RQ</td>
+<td>posted，不需要 RC</td>
+<td>写 CC、AQA、ASQ、ACQ、doorbell</td>
+</tr>
+<tr>
+<td>SSD 读 FPGA 队列&#x2F;PRP&#x2F;数据</td>
+<td>MemRd</td>
+<td>CQ</td>
+<td>需要 CC</td>
+<td>读 SQE、PRP List、Write payload</td>
+</tr>
+<tr>
+<td>SSD 写 FPGA completion&#x2F;data</td>
+<td>MemWr</td>
+<td>CQ</td>
+<td>posted，不需要 CC</td>
+<td>写 ACQ&#x2F;IOCQ CQE，Read payload 写回</td>
+</tr>
+<tr>
+<td>FPGA 响应 SSD MemRd</td>
+<td>CplD</td>
+<td>CC</td>
+<td>completion data</td>
+<td>返回 SQE、PRP entry、memory data</td>
+</tr>
+</tbody></table>
+<p>这里最关键的是 posted 和 non-posted 的区别：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">MemWr 通常是 posted request，发出去之后不会等 completion。</span><br><span class="line">MemRd / CfgRd 是 non-posted request，后续必须有 completion 返回。</span><br></pre></td></tr></table></figure>
+
+<p>因此，写 doorbell 后看不到 RC completion 是正常的；SSD 通过 CQ 写 IOCQ 后也不需要 FPGA 通过 CC 回应。只有 SSD 发起 MemRd 时，FPGA 才需要在 CC 上返回 CplD。</p>
+<h2 id="4-3-RQ：Requester-Request"><a href="#4-3-RQ：Requester-Request" class="headerlink" title="4.3 RQ：Requester Request"></a>4.3 RQ：Requester Request</h2><p>RQ 是 FPGA 主动向 SSD 发出的 PCIe request。</p>
+<p>在当前工程中，RQ 主要承载：</p>
+<ul>
+<li>PCIe 枚举和 NVMe 初始化阶段的配置读写。</li>
+<li>写 SSD BAR 中的 doorbell 寄存器。</li>
+<li>队列模块发出的 ASQ&#x2F;ACQ&#x2F;IOSQ&#x2F;IOCQ 相关 outbound request。</li>
+</ul>
+<p>代码路径可以概括为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">nvme_queue_ctl</span><br><span class="line">-&gt; ASQ/ACQ/IOSQ/IOCQ tx_rd_req_tlp / tx_wr_req_tlp</span><br><span class="line">-&gt; SSD_pcie_us</span><br><span class="line">-&gt; RQ_round_robin</span><br><span class="line">-&gt; pcie_us</span><br><span class="line">-&gt; pcie_dma_if</span><br><span class="line">-&gt; Xilinx PCIe IP s_axis_rq</span><br><span class="line">-&gt; SSD</span><br></pre></td></tr></table></figure>
+
+<p>典型例子是 SQ doorbell：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">FPGA 写入 SQE 到本地 queue buffer</span><br><span class="line">-&gt; RQ 发送 Memory Write TLP 到 SSD BAR0 doorbell</span><br><span class="line">-&gt; SSD 知道 Submission Queue tail 已更新</span><br></pre></td></tr></table></figure>
+
+<p>RQ 在初始化阶段和运行时的作用不完全一样：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>RQ 发出的主要请求</th>
+<th>后续观察点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PCIe 枚举</td>
+<td>CfgRd &#x2F; CfgWr</td>
+<td>RC 返回配置 completion，枚举状态机推进</td>
+</tr>
+<tr>
+<td>NVMe 基础初始化</td>
+<td>MemRd &#x2F; MemWr 到 SSD BAR0</td>
+<td>CAP&#x2F;CSTS 读取需要 RC，寄存器写入通常不等返回</td>
+</tr>
+<tr>
+<td>Queue 初始化</td>
+<td>SQ doorbell &#x2F; Admin command 相关写入</td>
+<td>SSD 后续通过 CQ 读取 ASQ</td>
+</tr>
+<tr>
+<td>IO 运行时</td>
+<td>IOSQ doorbell、CQ head doorbell</td>
+<td>SSD 后续通过 CQ 读取 IOSQ 或继续写 CQE</td>
+</tr>
+</tbody></table>
+<p>所以 RQ 本身不是“大数据通道”。对当前 16KB Write&#x2F;Read 来说，RQ 主要承担通知和少量寄存器访问，真正的 16KB payload 主要走 CQ&#x2F;CC 或 CQ MemWr。</p>
+<h2 id="4-4-RC：Requester-Completion"><a href="#4-4-RC：Requester-Completion" class="headerlink" title="4.4 RC：Requester Completion"></a>4.4 RC：Requester Completion</h2><p>RC 是 FPGA 主动请求之后，对端返回的 completion。</p>
+<p>在 PCIe 枚举、配置空间读取、读取 SSD BAR 寄存器时，RC 非常重要。比如 FPGA 读 NVMe CAP、VS、CSTS 等寄存器，SSD 会通过 completion 返回数据。</p>
+<p>当前工程中要注意一点：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ssd_top 中 pcie2nvme_rx_cpl_tlp_ready 接为 1&#x27;b0。</span><br></pre></td></tr></table></figure>
+
+<p>这说明 <code>SSD_ctl</code> 的主数据路径当前不消费 RC completion。运行时的 NVMe IO 数据流主要是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">RQ 写 doorbell</span><br><span class="line">SSD 通过 CQ 读 SQE/PRP/data 或写 CQE</span><br><span class="line">FPGA 通过 CC 返回 CplD</span><br></pre></td></tr></table></figure>
+
+<p>而 PCIe 枚举和 NVMe 初始化所需的 RC 路径主要在 <code>pcie_us</code> 内部处理。</p>
+<p>这会带来一个工程判断：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">如果卡在枚举或 NVMe 控制器寄存器初始化，优先看 RQ/RC。</span><br><span class="line">如果卡在 IO 命令发出之后，优先看 CQ/CC、queue、PRP、memory。</span><br></pre></td></tr></table></figure>
+
+<p>例如 <code>init_done</code> 不起来，可能是配置读写、CAP&#x2F;CSTS 读取或状态机等待 RC completion 出问题；而 <code>io_wr_done</code> 不回来，更可能是 SSD 没读到 IOSQ、PRP list、data，或者 IOCQ completion 没被正确接收和匹配。</p>
+<h2 id="4-5-CQ：Completer-Request"><a href="#4-5-CQ：Completer-Request" class="headerlink" title="4.5 CQ：Completer Request"></a>4.5 CQ：Completer Request</h2><p>CQ 是 SSD 主动访问 FPGA 地址空间时，PCIe IP 交给用户逻辑的 request 通道。</p>
+<p>在当前项目中，SSD 通过 CQ 发来的请求包括：</p>
+<ul>
+<li>读取 Admin SQE。</li>
+<li>写入 Admin CQE。</li>
+<li>读取 IO SQE。</li>
+<li>写入 IO CQE。</li>
+<li>读取 PRP List。</li>
+<li>读取或写入 FPGA memory window。</li>
+</ul>
+<p>代码路径可以概括为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">SSD</span><br><span class="line">-&gt; Xilinx PCIe IP m_axis_cq</span><br><span class="line">-&gt; pcie_dma_if / pcie_us_if_cq</span><br><span class="line">-&gt; rx_req_tlp_*</span><br><span class="line">-&gt; SSD_pcie_us</span><br><span class="line">-&gt; CQ_route</span><br><span class="line">-&gt; ASQ / ACQ / IOSQ / IOCQ / MEM_RD / MEM_WR / PRP</span><br></pre></td></tr></table></figure>
+
+<p><code>CQ_route</code> 按地址和 TLP 类型进行分发。当前主要窗口如下：</p>
+<table>
+<thead>
+<tr>
+<th>命中目标</th>
+<th>TLP 类型</th>
+<th>地址窗口</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ASQ</td>
+<td>MemRd</td>
+<td><code>ADMIN_SQ_ADDRESS</code></td>
+</tr>
+<tr>
+<td>ACQ</td>
+<td>MemWr</td>
+<td><code>ADMIN_CQ_ADDRESS</code></td>
+</tr>
+<tr>
+<td>IOSQ</td>
+<td>MemRd</td>
+<td><code>IO_SQ_ADDRESS</code></td>
+</tr>
+<tr>
+<td>IOCQ</td>
+<td>MemWr</td>
+<td><code>IO_CQ_ADDRESS</code></td>
+</tr>
+<tr>
+<td>MEM_RD</td>
+<td>MemRd</td>
+<td><code>cfg_memory_base_addr</code> 范围</td>
+</tr>
+<tr>
+<td>MEM_WR</td>
+<td>MemWr</td>
+<td><code>cfg_memory_base_addr</code> 范围</td>
+</tr>
+<tr>
+<td>PRP</td>
+<td>MemRd</td>
+<td><code>cfg_prp_base_addr</code> 范围</td>
+</tr>
+</tbody></table>
+<p>这里有一个调试时很重要的细节：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">CQ_route 下游多个端口共用 r_hdr/r_data。</span><br><span class="line">所以看到某个 debug hdr 变成 PRP 地址，不等于它一定 route 到 MEM_RD 或 PRP。</span><br><span class="line">真正判断要看对应 valid：MEM_RD_rx_req_tlp_valid、PRP_rx_req_tlp_valid 等。</span><br></pre></td></tr></table></figure>
+
+<p>CQ 是当前运行时最重要的入口。SSD 执行命令时，会把 FPGA 当成 host memory 来访问，所以 CQ 上出现 MemRd&#x2F;MemWr 是正常现象。</p>
+<p>对 CQ route 来说，判断一个请求最终去了哪里，至少要同时看三类信息：</p>
+<table>
+<thead>
+<tr>
+<th>信息</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>rx_req_tlp_valid/sop/eop</code></td>
+<td>说明 PCIe IP 真的收到一笔 request</td>
+</tr>
+<tr>
+<td><code>rx_req_tlp_hdr</code> 中的地址和类型</td>
+<td>判断是 MemRd 还是 MemWr，以及访问哪个地址窗口</td>
+</tr>
+<tr>
+<td>route 后的各路 <code>*_rx_req_tlp_valid</code></td>
+<td>判断请求真正分发到 ASQ&#x2F;ACQ&#x2F;IOSQ&#x2F;IOCQ&#x2F;MEM&#x2F;PRP 哪一路</td>
+</tr>
+</tbody></table>
+<p>例如同样是访问 <code>0x3000_xxxx</code> 附近地址：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">MemRd -&gt; 应命中 MEM_RD，后续由 memory 模块通过 CC 返回 CplD。</span><br><span class="line">MemWr -&gt; 应命中 MEM_WR，payload 直接写入 memory window，不会再走 CC。</span><br></pre></td></tr></table></figure>
+
+<p>同样是 completion queue 相关地址：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">Admin CQE 写回 -&gt; ACQ_rx_req_tlp_valid</span><br><span class="line">IO CQE 写回    -&gt; IOCQ_rx_req_tlp_valid</span><br></pre></td></tr></table></figure>
+
+<p>如果只看公共 <code>rx_req_tlp_hdr</code>，很容易误判；真正确认路径时要看 route 后的 valid 和 ready 是否 fire。</p>
+<h2 id="4-6-CC：Completer-Completion"><a href="#4-6-CC：Completer-Completion" class="headerlink" title="4.6 CC：Completer Completion"></a>4.6 CC：Completer Completion</h2><p>CC 是 FPGA 响应 SSD 的 Memory Read 时返回的 completion。</p>
+<p>SSD 读取 FPGA 里的 SQE、PRP List 和数据 buffer 时，都会从 CQ 发起 MemRd；FPGA 必须通过 CC 返回 CplD。</p>
+<p>当前工程中，CC 的来源包括：</p>
+<ul>
+<li>ASQ 返回 Admin SQE。</li>
+<li>IOSQ 返回 IO SQE。</li>
+<li>PRP 返回 PRP List entries。</li>
+<li>Memory 返回数据 buffer。</li>
+</ul>
+<p>代码路径可以概括为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">ASQ / IOSQ / PRP / pcie_memory_clt_top</span><br><span class="line">-&gt; *_tx_cpl_tlp_*</span><br><span class="line">-&gt; SSD_pcie_us</span><br><span class="line">-&gt; CC_round_robin</span><br><span class="line">-&gt; pcie_us</span><br><span class="line">-&gt; pcie_dma_if</span><br><span class="line">-&gt; Xilinx PCIe IP s_axis_cc</span><br><span class="line">-&gt; SSD</span><br></pre></td></tr></table></figure>
+
+<p><code>CC_round_robin</code> 负责把多个 completion source 仲裁到同一个 CC 通道。对当前 16KB Write 调试来说，最关键的是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">IOSQ CplD：返回 64B SQE</span><br><span class="line">PRP CplD：返回 PRP list entries</span><br><span class="line">MEM CplD：返回 16KB payload 分片</span><br></pre></td></tr></table></figure>
+
+<p>当前用户侧数据宽度是 256 bit，也就是一拍 32B。上板时如果 MPS 配置或协商后按 128B 处理，那么一个满 payload CplD 通常对应：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">128B / 32B = 4 beats</span><br></pre></td></tr></table></figure>
+
+<p>因此，memory CplD 不应该长期只返回 32B 小包。对 16KB Write 来说，SSD 读取 FPGA data buffer 时会产生多笔 MemRd，FPGA memory 模块需要按请求长度和 MPS 限制切分 completion。每一笔 CplD 都要保持：</p>
+<ul>
+<li>header 中 length、byte count、lower address 等字段与 payload 匹配。</li>
+<li><code>valid &amp;&amp; ready</code> 时才能推进 beat 计数。</li>
+<li><code>ready=0</code> 时 header、data、strb、sop&#x2F;eop 不能提前切到下一拍。</li>
+<li>最后一拍的 <code>eop</code> 和 <code>strb</code> 要和实际 payload 尾部一致。</li>
+</ul>
+<p>这部分曾经是上板调试里比较容易暴露问题的地方。只看 data 内容不够，还要同时看 header、strb、sop&#x2F;eop 和 ready&#x2F;valid。</p>
+<h2 id="4-7-四通道在工程中的汇聚和分发"><a href="#4-7-四通道在工程中的汇聚和分发" class="headerlink" title="4.7 四通道在工程中的汇聚和分发"></a>4.7 四通道在工程中的汇聚和分发</h2><p>当前工程不是直接在 <code>SSD_ctl</code> 里操作 Xilinx 原始 AXI-Stream，而是经过了适配和内部 TLP 信号封装。可以按下面理解：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">Xilinx PCIe IP</span><br><span class="line">-&gt; pcie_dma_if / pcie_us_if</span><br><span class="line">-&gt; 内部 TLP 信号</span><br><span class="line">-&gt; SSD_pcie_us</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>SSD_pcie_us</code> 内部，三个关键功能分别是：</p>
+<table>
+<thead>
+<tr>
+<th>功能</th>
+<th>方向</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>RQ_round_robin</code></td>
+<td>多路请求 -&gt; RQ</td>
+<td>汇聚 queue&#x2F;doorbell 等 FPGA 主动请求</td>
+</tr>
+<tr>
+<td><code>CQ_route</code></td>
+<td>CQ -&gt; 多路模块</td>
+<td>按地址和 TLP 类型分发 SSD 访问 FPGA 的请求</td>
+</tr>
+<tr>
+<td><code>CC_round_robin</code></td>
+<td>多路 completion -&gt; CC</td>
+<td>汇聚 ASQ&#x2F;IOSQ&#x2F;PRP&#x2F;MEM 返回的 CplD</td>
+</tr>
+</tbody></table>
+<p>这三个模块对应的是三类典型问题：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">RQ 发不出去：看 RQ_round_robin、tx_req_tlp_valid/ready、doorbell 源。</span><br><span class="line">CQ 分错路：看 CQ_route 地址命中、MemRd/MemWr 类型和各路 valid。</span><br><span class="line">CC 回不去：看 CC_round_robin、各源 tx_cpl_tlp_valid/ready、MPS 分包。</span><br></pre></td></tr></table></figure>
+
+<p>这种拆分对调试很有用，因为一次 NVMe Write 命令至少会同时经过 IOSQ、PRP 和 MEM 三类 CC source。如果 CC 汇聚有优先级或 ready&#x2F;valid 问题，SSD 就可能只读到 SQE，后续 PRP 或 data 不继续。</p>
+<h2 id="4-8-16KB-Write-中四通道的实际使用"><a href="#4-8-16KB-Write-中四通道的实际使用" class="headerlink" title="4.8 16KB Write 中四通道的实际使用"></a>4.8 16KB Write 中四通道的实际使用</h2><p>一次 16KB NVMe Write 过程中，四通道大致这样出现：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">RQ:</span><br><span class="line">    FPGA 写 IO SQ doorbell，通知 SSD 有新命令。</span><br><span class="line"></span><br><span class="line">CQ:</span><br><span class="line">    SSD 读 IOSQ 中的 SQE。</span><br><span class="line">    SSD 读 PRP List。</span><br><span class="line">    SSD 读 FPGA memory window 中的 16KB payload。</span><br><span class="line">    SSD 写 IOCQ completion。</span><br><span class="line"></span><br><span class="line">CC:</span><br><span class="line">    FPGA 返回 SQE CplD。</span><br><span class="line">    FPGA 返回 PRP List CplD。</span><br><span class="line">    FPGA 返回 Memory CplD。</span><br><span class="line"></span><br><span class="line">RC:</span><br><span class="line">    主 IO 数据路径中不参与；初始化/枚举相关 completion 在 pcie_us 内部处理。</span><br></pre></td></tr></table></figure>
+
+<p>按时间顺序展开，可以写成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">1. FPGA 通过 AXI4 先把 16KB 待写数据放入 memory window。</span><br><span class="line">2. AXI-Lite 触发 NVMe Write，Command 模块构造 IOSQ SQE。</span><br><span class="line">3. Queue 模块把 SQE 放入 IOSQ，并通过 RQ 写 SSD SQ doorbell。</span><br><span class="line">4. SSD 通过 CQ/MemRd 读取 IOSQ 中的 64B SQE。</span><br><span class="line">5. FPGA 通过 CC 返回 IOSQ CplD。</span><br><span class="line">6. SSD 发现命令跨多页，通过 CQ/MemRd 读取 PRP List。</span><br><span class="line">7. FPGA 通过 CC 返回 PRP entry。</span><br><span class="line">8. SSD 根据 PRP 指向的数据地址，通过 CQ/MemRd 读取 16KB data buffer。</span><br><span class="line">9. FPGA memory 模块通过 CC 返回多笔 CplD。</span><br><span class="line">10. SSD 完成写入后，通过 CQ/MemWr 写 IOCQ CQE。</span><br><span class="line">11. Queue/Command 模块解析 CQE，匹配 CID，产生 io_wr_done。</span><br></pre></td></tr></table></figure>
+
+<p>这条路径说明一个关键事实：NVMe Write 的大数据 payload 并不是 FPGA 主动 RQ 写给 SSD，而是 SSD 根据 PRP 地址主动从 FPGA 读走。</p>
+<h2 id="4-9-16KB-Read-中四通道的实际使用"><a href="#4-9-16KB-Read-中四通道的实际使用" class="headerlink" title="4.9 16KB Read 中四通道的实际使用"></a>4.9 16KB Read 中四通道的实际使用</h2><p>一次 16KB NVMe Read 过程中：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">RQ:</span><br><span class="line">    FPGA 写 IO SQ doorbell。</span><br><span class="line"></span><br><span class="line">CQ:</span><br><span class="line">    SSD 读 IOSQ 中的 SQE。</span><br><span class="line">    SSD 读 PRP List。</span><br><span class="line">    SSD 通过 MemWr 把数据写入 FPGA memory window。</span><br><span class="line">    SSD 写 IOCQ completion。</span><br><span class="line"></span><br><span class="line">CC:</span><br><span class="line">    FPGA 返回 SQE CplD。</span><br><span class="line">    FPGA 返回 PRP List CplD。</span><br><span class="line">    读命令的数据本体由 SSD MemWr 写入 FPGA，所以数据本体不需要 FPGA 返回 CC。</span><br><span class="line"></span><br><span class="line">RC:</span><br><span class="line">    主 IO 数据路径中不参与。</span><br></pre></td></tr></table></figure>
+
+<p>按时间顺序展开，可以写成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">1. AXI-Lite 触发 NVMe Read，Command 模块构造 IOSQ SQE。</span><br><span class="line">2. Queue 模块通过 RQ 写 SSD SQ doorbell。</span><br><span class="line">3. SSD 通过 CQ/MemRd 读取 IOSQ 中的 64B SQE。</span><br><span class="line">4. FPGA 通过 CC 返回 IOSQ CplD。</span><br><span class="line">5. SSD 通过 CQ/MemRd 读取 PRP List。</span><br><span class="line">6. FPGA 通过 CC 返回 PRP entry。</span><br><span class="line">7. SSD 从自身 NAND/缓存中取出数据，通过 CQ/MemWr 写 FPGA memory window。</span><br><span class="line">8. memory 模块接收 MemWr payload，把数据保存到 destination buffer。</span><br><span class="line">9. SSD 通过 CQ/MemWr 写 IOCQ CQE。</span><br><span class="line">10. Queue/Command 模块解析 CQE，匹配 CID，产生 io_rd_done。</span><br><span class="line">11. 外部 AXI4 从 destination buffer 读出 16KB 并校验。</span><br></pre></td></tr></table></figure>
+
+<p>这条路径和 Write 最大的不同在于：Read 的数据本体是 SSD 主动写回 FPGA memory window，所以数据 payload 不走 CC。CC 只用于返回 SQE 和 PRP List。</p>
+<h2 id="4-10-ILA-观测和路径判断"><a href="#4-10-ILA-观测和路径判断" class="headerlink" title="4.10 ILA 观测和路径判断"></a>4.10 ILA 观测和路径判断</h2><p>上板调试时，四通道可以按层级观察，不需要一开始就抓所有信号。</p>
+<table>
+<thead>
+<tr>
+<th>问题现象</th>
+<th>优先观察</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>init_done</code> 不起来</td>
+<td>RQ&#x2F;RC、枚举状态、NVMe init 状态</td>
+</tr>
+<tr>
+<td><code>queue_init_done</code> 不起来</td>
+<td>RQ doorbell、ASQ_rx_req、ACQ_rx_req、Admin command done</td>
+</tr>
+<tr>
+<td>Write 命令卡住</td>
+<td>IOSQ_rx_req、PRP_rx_req、MEM_RD_rx_req、MEM_tx_cpl、IOCQ_rx_req</td>
+</tr>
+<tr>
+<td>Read 命令卡住</td>
+<td>IOSQ_rx_req、PRP_rx_req、MEM_WR_rx_req、IOCQ_rx_req</td>
+</tr>
+<tr>
+<td>completion 不匹配</td>
+<td>IOCQ_rx_req、queue_cpl_route、command_done_valid、CID&#x2F;SQID&#x2F;status</td>
+</tr>
+<tr>
+<td>data 比较失败</td>
+<td>MEM_WR&#x2F;MEM_RD 地址、strb、payload 顺序、AXI RAM 地址映射</td>
+</tr>
+</tbody></table>
+<p>对每条路径，建议至少抓：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">valid</span><br><span class="line">ready</span><br><span class="line">sop</span><br><span class="line">eop</span><br><span class="line">strb</span><br><span class="line">hdr</span><br><span class="line">data</span><br><span class="line">route hit 或 selected source</span><br></pre></td></tr></table></figure>
+
+<p>触发点可以按问题选择：</p>
+<ul>
+<li>SSD 不读 SQE：触发 <code>IOSQ_rx_req_tlp_valid</code>。</li>
+<li>SSD 不读 PRP：触发 <code>PRP_rx_req_tlp_valid</code> 或 <code>CQ_route_hit_prp</code>。</li>
+<li>SSD 不读 data：触发 <code>MEM_RD_rx_req_tlp_valid</code>。</li>
+<li>SSD 读回数据不对：触发 <code>MEM_tx_cpl_tlp_valid</code>，同时观察 header&#x2F;data&#x2F;strb。</li>
+<li>Read 数据没有写入 FPGA：触发 <code>MEM_WR_rx_req_tlp_valid</code>。</li>
+<li>命令完成但没有 done：触发 <code>IOCQ_rx_req_tlp_valid</code> 和 <code>command_done_valid</code>。</li>
+</ul>
+<h2 id="4-11-ready-valid-和流控关系"><a href="#4-11-ready-valid-和流控关系" class="headerlink" title="4.11 ready&#x2F;valid 和流控关系"></a>4.11 ready&#x2F;valid 和流控关系</h2><p>当前工程主要依赖 AXI-Stream <code>ready/valid</code> 背压保证 TLP 传输正确性。PCIe IP 也暴露了 credit 观测接口，例如 <code>cfg_fc_ph/pd/nph/npd/cplh/cpld</code>，但当前没有把它们做成完整的 credit-aware 调度。</p>
+<p>当前实现中最重要的规则是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">fire = valid &amp;&amp; ready;</span><br></pre></td></tr></table></figure>
+
+<p>状态机里的地址递增、payload beat 计数、header 切换、<code>sop/eop</code> 推进，都应该跟随 <code>fire</code>。如果 <code>ready</code> 被 PCIe IP 拉低，而状态机仍然继续更新 header 或 data，就会出现几类典型问题：</p>
+<ul>
+<li>最后一拍数据重复或丢失。</li>
+<li>header 对应的是上一笔请求，data 对应的是下一笔请求。</li>
+<li><code>eop</code> 提前或滞后。</li>
+<li>CplD length 和实际 payload beat 数不一致。</li>
+<li>SSD 后续不再继续读 PRP 或 data，最终命令超时。</li>
+</ul>
+<p><code>cfg_fc_*</code> credit 信号可以作为后续优化方向，用来判断 PCIe IP 内部 header&#x2F;data credit 是否紧张。但当前工程的基础正确性仍然优先依赖 ready&#x2F;valid 和 FIFO&#x2F;arbiter 的背压处理。</p>
+<h2 id="4-12-章节总结"><a href="#4-12-章节总结" class="headerlink" title="4.12 章节总结"></a>4.12 章节总结</h2><p>本章核心是把 PCIe IP 的四条 AXI-Stream 通道和 NVMe 运行时行为对应起来：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">RQ/RC：FPGA 主动访问 SSD，主要用于枚举、初始化、doorbell 和寄存器读写。</span><br><span class="line">CQ/CC：SSD 主动访问 FPGA，主要用于读取 SQE/PRP/data，以及写回 CQE/read data。</span><br></pre></td></tr></table></figure>
+
+<p>对于当前 SSD 控制器，运行时最重要的是 CQ&#x2F;CC：SSD 收到 doorbell 后，会通过 CQ 读取 FPGA 里的队列、PRP 和数据；FPGA 必须通过 CC 正确返回 CplD。NVMe Write 的 payload 是 SSD 通过 CQ MemRd 主动读走，NVMe Read 的 payload 是 SSD 通过 CQ MemWr 主动写回。</p>
+<p>因此调试时不能只看命令是否发出，还要沿着下面链路确认：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">doorbell 是否发出</span><br><span class="line">SSD 是否读取 IOSQ</span><br><span class="line">SSD 是否读取 PRP List</span><br><span class="line">SSD 是否读取或写入 memory window</span><br><span class="line">SSD 是否写回 IOCQ</span><br><span class="line">command_record 是否匹配 CID 并产生 done</span><br></pre></td></tr></table></figure>
+
+<p>这条链路打通后，Command、Queue、PRP 和 Memory 才真正组成完整的 NVMe over PCIe 硬件读写闭环。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/" data-id="cmpf3dfkq0000aci7d19z6mde" data-title="FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2026/05/21/fpga-nvme-host-05-init-queue/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">前一篇</strong>
+      <div class="article-nav-title">
+        
+          FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2026/05/20/fpga-nvme-host-03-architecture/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">后一篇</strong>
+      <div class="article-nav-title">FPGA NVMe Host 项目记录（三）：系统总体架构</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">分类</h3>
+    <div class="widget">
+      <ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/">FPGA</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/PCIe/">PCIe</a></li></ul></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Xilinx/" rel="tag">Xilinx</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签云</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 15px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">归档</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/05/">五月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/01/">一月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/09/">九月 2025</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">最新文章</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05-init-queue/">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/">FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/">FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      
+      &copy; 2026 LI HUALOU<br>
+      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+
+<script src="/js/jquery-3.6.4.min.js"></script>
+
+
+
+  
+<script src="/fancybox/jquery.fancybox.min.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+
+  </div>
+</body>
+</html>

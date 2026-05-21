@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="650" viewBox="0 0 1180 650" role="img" aria-labelledby="title desc">
+  <title id="title">NVMe initialization and queue creation flow</title>
+  <desc id="desc">PCIe enumeration, NVMe controller initialization, Admin Queue setup, and IO queue creation.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.4; rx: 8; ry: 8; }
+      .pcie { fill: #eff6ff; }
+      .nvme { fill: #fff7ed; }
+      .queue { fill: #f0fdf4; }
+      .done { fill: #f8fafc; }
+      .box-title { font-size: 16px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .lane { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .tag { font-size: 13px; fill: #0369a1; font-weight: 700; }
+      .mono { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12px; fill: #334155; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="650" fill="#ffffff"/>
+  <text x="44" y="48" class="title">NVMe 初始化与队列建立流程</text>
+  <text x="44" y="75" class="subtitle">先让 SSD 控制器进入 ready，再通过 Admin Queue 创建 IO Completion Queue 和 16 路 IO Submission Queue</text>
+
+  <rect x="60" y="125" width="230" height="100" class="box pcie"/>
+  <text x="84" y="158" class="box-title">PCIe DFS 枚举</text>
+  <text x="84" y="186" class="small">扫描 BDF / Class Code</text>
+  <text x="84" y="209" class="small">确认 NVMe BAR0 / link</text>
+
+  <rect x="360" y="125" width="230" height="100" class="box nvme"/>
+  <text x="384" y="158" class="box-title">读 NVMe CAP/CSTS</text>
+  <text x="384" y="186" class="small">确认控制器能力</text>
+  <text x="384" y="209" class="small">等待可配置状态</text>
+
+  <rect x="660" y="125" width="230" height="100" class="box nvme"/>
+  <text x="684" y="158" class="box-title">关闭 CC.EN</text>
+  <text x="684" y="186" class="small">写 CC 关闭控制器</text>
+  <text x="684" y="209" class="small">轮询 CSTS.RDY 为 0</text>
+
+  <rect x="60" y="300" width="230" height="115" class="box queue"/>
+  <text x="84" y="333" class="box-title">配置 Admin Queue</text>
+  <text x="84" y="361" class="mono">AQA = ASQ/ACQ depth - 1</text>
+  <text x="84" y="386" class="mono">ASQ = 0x2000_0000</text>
+  <text x="84" y="411" class="mono">ACQ = 0x2000_1000</text>
+
+  <rect x="360" y="300" width="230" height="115" class="box nvme"/>
+  <text x="384" y="333" class="box-title">开启 CC.EN</text>
+  <text x="384" y="361" class="small">写 NVMe CC</text>
+  <text x="384" y="386" class="small">轮询 CSTS.RDY 为 1</text>
+  <text x="384" y="411" class="mono">nvme_init_done</text>
+
+  <rect x="660" y="300" width="230" height="115" class="box queue"/>
+  <text x="684" y="333" class="box-title">创建 IO CQ</text>
+  <text x="684" y="361" class="mono">Admin opcode = 0x05</text>
+  <text x="684" y="386" class="mono">CQID = 1</text>
+  <text x="684" y="411" class="mono">IOCQ depth = 1024</text>
+
+  <rect x="360" y="490" width="230" height="100" class="box queue"/>
+  <text x="384" y="523" class="box-title">循环创建 16 路 IOSQ</text>
+  <text x="384" y="551" class="mono">Admin opcode = 0x01</text>
+  <text x="384" y="574" class="mono">QID = 1..16, CQID = 1</text>
+
+  <rect x="660" y="490" width="230" height="100" class="box done"/>
+  <text x="684" y="523" class="box-title">初始化完成边界</text>
+  <text x="684" y="551" class="mono">admin_queue_init_done</text>
+  <text x="684" y="574" class="mono">queue_init_done</text>
+
+  <path d="M290 175 C320 175 330 175 358 175" class="lane"/>
+  <path d="M590 175 C620 175 630 175 658 175" class="lane"/>
+  <path d="M775 225 C775 260 175 260 175 298" class="lane"/>
+  <path d="M290 357 C320 357 330 357 358 357" class="lane"/>
+  <path d="M590 357 C620 357 630 357 658 357" class="lane"/>
+  <path d="M775 415 C775 460 475 460 475 488" class="lane"/>
+  <path d="M590 540 C620 540 630 540 658 540" class="lane"/>
+
+  <text x="308" y="158" class="tag">RC completion</text>
+  <text x="292" y="245" class="tag">pcie_nvme_init_state</text>
+  <text x="694" y="460" class="tag">ADMIN_queue_init</text>
+</svg>

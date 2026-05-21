@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="610" viewBox="0 0 1180 610" role="img" aria-labelledby="title desc">
+  <title id="title">PCIe RQ RC CQ CC channel map</title>
+  <desc id="desc">Direction map of the four PCIe AXI-Stream TLP channels in this FPGA NVMe project.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.5; rx: 8; ry: 8; }
+      .host { fill: #eff6ff; }
+      .ssd { fill: #f0fdf4; }
+      .mid { fill: #fff7ed; }
+      .lane { stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .rq { stroke: #2563eb; }
+      .rc { stroke: #7c3aed; stroke-dasharray: 8 6; }
+      .cq { stroke: #ea580c; }
+      .cc { stroke: #16a34a; }
+      .box-title { font-size: 20px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .tag { font-size: 15px; font-weight: 700; }
+      .rq-text { fill: #1d4ed8; }
+      .rc-text { fill: #6d28d9; }
+      .cq-text { fill: #c2410c; }
+      .cc-text { fill: #15803d; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="610" fill="#ffffff"/>
+  <text x="44" y="48" class="title">PCIe TLP 四通道方向图</text>
+  <text x="44" y="75" class="subtitle">这里的 CQ/CC 是 Xilinx PCIe IP 通道名，不是 NVMe Completion Queue</text>
+
+  <rect x="55" y="145" width="300" height="270" class="box host"/>
+  <text x="88" y="187" class="box-title">FPGA User Logic</text>
+  <text x="88" y="225" class="small">SSD_ctl</text>
+  <text x="88" y="250" class="small">command / queue / PRP / memory</text>
+  <text x="88" y="275" class="small">SSD_pcie_us route and arbitration</text>
+
+  <rect x="445" y="145" width="285" height="270" class="box mid"/>
+  <text x="475" y="187" class="box-title">Xilinx PCIe IP</text>
+  <text x="475" y="225" class="small">pcie_us</text>
+  <text x="475" y="250" class="small">pcie_dma_if</text>
+  <text x="475" y="275" class="small">AXI-Stream RQ/RC/CQ/CC</text>
+
+  <rect x="825" y="145" width="300" height="270" class="box ssd"/>
+  <text x="858" y="187" class="box-title">NVMe SSD</text>
+  <text x="858" y="225" class="small">读取 SQE / PRP / data</text>
+  <text x="858" y="250" class="small">写入 CQE / data</text>
+  <text x="858" y="275" class="small">执行 NVMe Read / Write</text>
+
+  <path d="M355 160 C400 160 400 160 445 160" class="lane rq"/>
+  <path d="M730 160 C775 160 775 160 825 160" class="lane rq"/>
+  <text x="518" y="133" class="tag rq-text">RQ：FPGA 主动请求</text>
+  <text x="482" y="466" class="small">用途：doorbell、初始化配置写、队列 outbound request</text>
+
+  <path d="M825 225 C775 225 775 225 730 225" class="lane rc"/>
+  <path d="M445 225 C400 225 400 225 355 225" class="lane rc"/>
+  <text x="515" y="213" class="tag rc-text">RC：对 FPGA 请求的 completion</text>
+  <text x="482" y="491" class="small">用途：枚举和 NVMe 寄存器读取返回，当前运行 IO 主路径不消费 SSD_ctl RC</text>
+
+  <path d="M825 320 C775 320 775 320 730 320" class="lane cq"/>
+  <path d="M445 320 C400 320 400 320 355 320" class="lane cq"/>
+  <text x="502" y="309" class="tag cq-text">CQ：SSD 主动访问 FPGA</text>
+  <text x="482" y="516" class="small">用途：SSD MemRd SQE / PRP / data，或 MemWr CQE / read data</text>
+
+  <path d="M355 390 C400 390 400 390 445 390" class="lane cc"/>
+  <path d="M730 390 C775 390 775 390 825 390" class="lane cc"/>
+  <text x="504" y="383" class="tag cc-text">CC：FPGA 返回 CplD</text>
+  <text x="482" y="541" class="small">用途：返回 SQE、PRP list entry、memory read data</text>
+</svg>

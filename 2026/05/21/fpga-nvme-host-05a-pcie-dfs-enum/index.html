@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+  
+  <title>FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计 | LI HUALOU</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="本章以最新工程中的 pcie_us_enum_dfs_state.v 为主。需要注意：该模块当前是独立 DFS 枚举版本，源码注释中也明确写了它还没有直接替换 pcie_us_enum_state.v。因此这里记录的是深度优先枚举设计方案与当前接入状态，不表示当前 pcie_us.v 主路径已经切换完成。   目录 5A.1 PCIe 枚举原理 5A.2 为什么要改成深度优先枚举 5A.3 模块">
+<meta property="og:type" content="article">
+<meta property="og:title" content="FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计">
+<meta property="og:url" content="https://seattlice.github.io/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/index.html">
+<meta property="og:site_name" content="LI HUALOU">
+<meta property="og:description" content="本章以最新工程中的 pcie_us_enum_dfs_state.v 为主。需要注意：该模块当前是独立 DFS 枚举版本，源码注释中也明确写了它还没有直接替换 pcie_us_enum_state.v。因此这里记录的是深度优先枚举设计方案与当前接入状态，不表示当前 pcie_us.v 主路径已经切换完成。   目录 5A.1 PCIe 枚举原理 5A.2 为什么要改成深度优先枚举 5A.3 模块">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/5a-pcie-dfs-enum-flow.svg">
+<meta property="article:published_time" content="2026-05-20T16:40:00.000Z">
+<meta property="article:modified_time" content="2026-05-20T16:40:00.000Z">
+<meta property="article:author" content="LI HUALOU">
+<meta property="article:tag" content="NVMe">
+<meta property="article:tag" content="PCIe">
+<meta property="article:tag" content="FPGA">
+<meta property="article:tag" content="RTL">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://seattlice.github.io/images/nvme-host/5a-pcie-dfs-enum-flow.svg">
+  
+    <link rel="alternate" href="/atom.xml" title="LI HUALOU" type="application/atom+xml">
+  
+  
+    <link rel="shortcut icon" href="/favicon.png">
+  
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+    
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+
+  
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fork-awesome@1.2.0/css/fork-awesome.min.css">
+
+<meta name="generator" content="Hexo 7.3.0"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">LI HUALOU</a>
+      </h1>
+      
+        <h2 id="subtitle-wrap">
+          <a href="/" id="subtitle">HUALOU</a>
+        </h2>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+        
+          <a class="nav-icon" href="/atom.xml" title="RSS 订阅"><span class="fa fa-rss"></span></a>
+        
+        <a class="nav-icon nav-search-btn" title="搜索"><span class="fa fa-search"></span></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="搜索"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="https://seattlice.github.io"></form>
+      </div>
+    </div>
+  </div>
+</header>
+
+      <div class="outer">
+        <section id="main"><article id="post-fpga-nvme-host-05a-pcie-dfs-enum" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T16:40:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="p-name article-title" itemprop="headline name">
+      FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>本章以最新工程中的 <code>pcie_us_enum_dfs_state.v</code> 为主。需要注意：该模块当前是独立 DFS 枚举版本，源码注释中也明确写了它还没有直接替换 <code>pcie_us_enum_state.v</code>。因此这里记录的是深度优先枚举设计方案与当前接入状态，不表示当前 <code>pcie_us.v</code> 主路径已经切换完成。</p>
+</blockquote>
+<p><img src="/images/nvme-host/5a-pcie-dfs-enum-flow.svg" alt="图 5A-1 PCIe 深度优先枚举状态机"></p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#5A-1-PCIe-%E6%9E%9A%E4%B8%BE%E5%8E%9F%E7%90%86">5A.1 PCIe 枚举原理</a></li>
+<li><a href="#5A-2-%E4%B8%BA%E4%BB%80%E4%B9%88%E8%A6%81%E6%94%B9%E6%88%90%E6%B7%B1%E5%BA%A6%E4%BC%98%E5%85%88%E6%9E%9A%E4%B8%BE">5A.2 为什么要改成深度优先枚举</a></li>
+<li><a href="#5A-3-%E6%A8%A1%E5%9D%97%E5%AE%9A%E4%BD%8D">5A.3 模块定位</a></li>
+<li><a href="#5A-4-BDF-%E6%89%AB%E6%8F%8F%E9%A1%BA%E5%BA%8F">5A.4 BDF 扫描顺序</a></li>
+<li><a href="#5A-5-Class-Code-%E5%88%A4%E6%96%AD">5A.5 Class Code 判断</a></li>
+<li><a href="#5A-6-Bridge-%E4%B8%8B%E6%8E%A2%E9%80%BB%E8%BE%91">5A.6 Bridge 下探逻辑</a></li>
+<li><a href="#5A-7-NVMe-BAR-%E9%85%8D%E7%BD%AE%E6%B5%81%E7%A8%8B">5A.7 NVMe BAR 配置流程</a></li>
+<li><a href="#5A-8-Completion-%E5%8C%B9%E9%85%8D%E4%B8%8E%E8%B6%85%E6%97%B6">5A.8 Completion 匹配与超时</a></li>
+<li><a href="#5A-9-%E9%94%99%E8%AF%AF%E7%A0%81">5A.9 错误码</a></li>
+<li><a href="#5A-10-%E4%B8%8E%E5%BD%93%E5%89%8D%E5%B7%A5%E7%A8%8B%E7%9A%84%E6%8E%A5%E5%85%A5%E5%85%B3%E7%B3%BB">5A.10 与当前工程的接入关系</a></li>
+<li><a href="#5A-11-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">5A.11 章节总结</a></li>
+</ul>
+<h2 id="5A-1-PCIe-枚举原理"><a href="#5A-1-PCIe-枚举原理" class="headerlink" title="5A.1 PCIe 枚举原理"></a>5A.1 PCIe 枚举原理</h2><p>PCIe 枚举本质上是 Root Complex 对下游设备配置空间的扫描和配置过程。FPGA 在这个项目里扮演的是主机侧逻辑，所以它需要主动发起 Configuration Read &#x2F; Configuration Write，通过配置空间判断链路后面挂着什么设备、这个设备在哪个 BDF 上、BAR 空间需要多大，以及后续 NVMe 初始化应该访问哪个 MMIO 基地址。</p>
+<p>一个 PCIe function 由 BDF 标识：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">BDF = Bus Number + Device Number + Function Number</span><br></pre></td></tr></table></figure>
+
+<p>在 TLP 通道上，这个过程主要使用 RQ 和 RC：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">RQ: FPGA 发出 CfgRd / CfgWr</span><br><span class="line">RC: 设备或 Bridge 返回 Completion</span><br></pre></td></tr></table></figure>
+
+<p>配置空间里最先要看的几个 offset 是固定的：</p>
+<table>
+<thead>
+<tr>
+<th>Offset</th>
+<th>内容</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0x000</code></td>
+<td>Vendor ID &#x2F; Device ID</td>
+<td>判断 function 是否存在，<code>Vendor ID = 16&#39;hffff</code> 表示不存在</td>
+</tr>
+<tr>
+<td><code>0x004</code></td>
+<td>Command Register</td>
+<td>最后使能 Memory Space、Bus Master</td>
+</tr>
+<tr>
+<td><code>0x008</code></td>
+<td>Revision ID &#x2F; Class Code</td>
+<td>判断设备类型，NVMe 为 <code>24&#39;h010802</code></td>
+</tr>
+<tr>
+<td><code>0x00c</code></td>
+<td>Header Type</td>
+<td>判断 endpoint &#x2F; bridge，以及 function 0 是否是 multi-function</td>
+</tr>
+<tr>
+<td><code>0x010</code></td>
+<td>BAR0</td>
+<td>探测和配置 endpoint 的 MMIO 空间</td>
+</tr>
+<tr>
+<td><code>0x018</code></td>
+<td>Bridge Bus Number</td>
+<td>bridge 设备上配置 primary &#x2F; secondary &#x2F; subordinate bus</td>
+</tr>
+<tr>
+<td><code>0x020</code></td>
+<td>Bridge Memory Base &#x2F; Limit</td>
+<td>bridge 设备上配置下游 memory window</td>
+</tr>
+</tbody></table>
+<p>普通 endpoint 的枚举比较直接：先读 Vendor ID 确认 function 存在，再读 Header Type 和 Class Code。如果 Class Code 是 NVMe，就进入 BAR 探测：向 BAR 写全 1，再读回 mask，由 mask 计算 BAR size，最后写入工程规划好的 BAR base，并写 Command Register 打开 Memory Space 和 Bus Master。</p>
+<p>Bridge 的处理更特殊。Root Complex 不能只扫描当前 bus，因为 PCIe Switch 或桥后面的设备在 secondary bus 上。遇到 Class Code 为 <code>24&#39;h060400</code> 的 PCI bridge 时，需要先给 bridge 分配 secondary bus，配置 memory window，再进入 secondary bus 扫描。深度优先枚举就是在这里体现出来的：遇到 bridge 后优先下探桥后面的 bus，子 bus 扫描结束后再回到原 bus 的下一个 device&#x2F;function。</p>
+<p>当前 DFS 模块把这套流程做成了硬件状态机，关键判断和工程源码是一一对应的：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] current_bdf = &#123;scan_bus_reg, scan_dev_reg[<span class="number">4</span>:<span class="number">0</span>], scan_func_reg&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">23</span>:<span class="number">0</span>] CLASS_NVME       = <span class="number">24&#x27;h010802</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">23</span>:<span class="number">0</span>] CLASS_PCI_BRIDGE = <span class="number">24&#x27;h060400</span>;</span><br></pre></td></tr></table></figure>
+
+<p>BDF 的基础扫描顺序是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">ST_READ_VENDOR: issue_cfg_read(current_bdf, <span class="number">12&#x27;h000</span>, ST_WAIT_VENDOR);</span><br><span class="line">ST_READ_HEADER: issue_cfg_read(current_bdf, <span class="number">12&#x27;h00c</span>, ST_WAIT_HEADER);</span><br><span class="line">ST_READ_CLASS:  issue_cfg_read(current_bdf, <span class="number">12&#x27;h008</span>, ST_WAIT_CLASS);</span><br></pre></td></tr></table></figure>
+
+<p>Class Code 判断决定后面的路径：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (class_code_reg == CLASS_NVME) <span class="keyword">begin</span></span><br><span class="line">    ssd_found_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    ssd_bdf_next = current_bdf;</span><br><span class="line">    state_next = ST_NVME_READ_BAR0;</span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (class_code_reg == CLASS_PCI_BRIDGE) <span class="keyword">begin</span></span><br><span class="line">    state_next = ST_BRIDGE_PREP;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>配置请求都是 non-posted request，不能只看请求发出去，还必须等 RC completion 回来。模块用 tag 记录 outstanding 的配置请求，并在 RC 侧匹配 completion：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> cpl_seen = rx_cpl_tlp_valid[<span class="number">0</span>] &amp;&amp; rx_cpl_tlp_sop[<span class="number">0</span>] &amp;&amp;</span><br><span class="line">                (rx_cpl_tlp_hdr[<span class="number">47</span>:<span class="number">40</span>] == pending_tag_reg);</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">2</span>:<span class="number">0</span>] cpl_status = rx_cpl_tlp_hdr[<span class="number">79</span>:<span class="number">77</span>];</span><br></pre></td></tr></table></figure>
+
+<p>所以枚举模块的核心不是“顺序读几个寄存器”这么简单，而是一个完整的配置事务闭环：发 CfgRd &#x2F; CfgWr、等待 completion、检查 status、根据设备类型切换扫描路径，并把最终找到的 <code>ssd_bdf</code> 和 <code>ssd_bar0_base</code> 交给后面的 NVMe 初始化状态机。</p>
+<h2 id="5A-2-为什么要改成深度优先枚举"><a href="#5A-2-为什么要改成深度优先枚举" class="headerlink" title="5A.2 为什么要改成深度优先枚举"></a>5A.2 为什么要改成深度优先枚举</h2><p>早期枚举模块 <code>pcie_us_enum_state.v</code> 更像是面向单个固定 SSD 的初始化脚本。它默认目标 BDF 接近 <code>01:00.0</code>，直接读 Vendor ID、探测 BAR、写 BAR 地址、写 Command Register，然后读 NVMe CAP 验证链路。</p>
+<p>这种方式适合第一阶段上板验证，因为最短路径清楚，能快速证明 FPGA 可以通过 RQ&#x2F;RC 和 SSD 配置空间通信。但它的问题也明显：</p>
+<ul>
+<li>如果 SSD 不在固定 BDF 上，枚举会失败。</li>
+<li>如果链路后面挂了 PCIe Switch，旧流程不会进入 secondary bus。</li>
+<li>如果挂了多个 endpoint，旧流程无法判断哪个设备才是 NVMe。</li>
+<li>从枚举完整性看，它更像固定设备 Bring-up，不像完整的 Root Complex 枚举流程。</li>
+</ul>
+<p><code>pcie_us_enum_dfs_state.v</code> 的目标，是把这部分升级为更标准的硬件枚举流程：从一个起始 bus 开始扫描 BDF，遇到 PCI bridge 就配置桥并优先下探它的 secondary bus，直到找到 class code 为 NVMe 的 endpoint。</p>
+<h2 id="5A-3-模块定位"><a href="#5A-3-模块定位" class="headerlink" title="5A.3 模块定位"></a>5A.3 模块定位</h2><p>DFS 枚举模块仍然使用工程中已有的 TLP 通路：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">RQ: FPGA 发 CfgRd / CfgWr</span><br><span class="line">RC: SSD 或 Bridge 返回 Completion</span><br></pre></td></tr></table></figure>
+
+<p>它不参与后续 IO 数据路径，也不处理 SSD 主动访问 FPGA 地址空间的 CQ&#x2F;CC 路径。枚举结束后，它应该输出 SSD 的关键身份信息，供后续 NVMe 初始化使用。</p>
+<p>核心输出为：</p>
+<table>
+<thead>
+<tr>
+<th>输出</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>enum_done</code></td>
+<td>DFS 枚举成功完成</td>
+</tr>
+<tr>
+<td><code>enum_error</code></td>
+<td>DFS 枚举失败</td>
+</tr>
+<tr>
+<td><code>enum_error_code</code></td>
+<td>失败原因</td>
+</tr>
+<tr>
+<td><code>ssd_found</code></td>
+<td>找到 NVMe endpoint</td>
+</tr>
+<tr>
+<td><code>ssd_bdf</code></td>
+<td>SSD 的 Bus&#x2F;Device&#x2F;Function</td>
+</tr>
+<tr>
+<td><code>ssd_bar0_base</code></td>
+<td>分配给 SSD BAR0 的基地址</td>
+</tr>
+<tr>
+<td><code>ssd_bar0_size</code></td>
+<td>探测出的 BAR0 空间大小</td>
+</tr>
+<tr>
+<td><code>ssd_class_code</code></td>
+<td>SSD class code，NVMe 应为 <code>24&#39;h010802</code></td>
+</tr>
+<tr>
+<td><code>ssd_vendor_id</code> &#x2F; <code>ssd_device_id</code></td>
+<td>配置空间 offset <code>0x00</code> 读出的设备身份</td>
+</tr>
+</tbody></table>
+<p>当前参数里比较重要的是：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>当前值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>REQUESTER_ID</code></td>
+<td><code>16&#39;h0000</code></td>
+<td>FPGA Root Complex 发起配置请求时使用的 Requester ID</td>
+</tr>
+<tr>
+<td><code>START_BUS</code></td>
+<td><code>8&#39;d1</code></td>
+<td>从 bus 1 开始扫描</td>
+</tr>
+<tr>
+<td><code>MAX_BUS</code></td>
+<td><code>8&#39;d16</code></td>
+<td>最大扫描到 bus 16</td>
+</tr>
+<tr>
+<td><code>STACK_DEPTH</code></td>
+<td><code>8</code></td>
+<td>bridge 下探返回栈深度</td>
+</tr>
+<tr>
+<td><code>NVME_BAR0_BASE</code></td>
+<td><code>32&#39;h1000_0000</code></td>
+<td>分配给 NVMe BAR0 的地址</td>
+</tr>
+<tr>
+<td><code>BRIDGE_MEM_WINDOW_SIZE</code></td>
+<td><code>32&#39;h0100_0000</code></td>
+<td>给 bridge 配置的 memory window 大小</td>
+</tr>
+<tr>
+<td><code>CFG_TIMEOUT_CYCLES</code></td>
+<td><code>100000</code></td>
+<td>配置请求 completion 等待超时</td>
+</tr>
+<tr>
+<td><code>STRICT_ENDPOINT_FAIL</code></td>
+<td><code>1</code></td>
+<td>遇到非 NVMe endpoint 时是否直接失败</td>
+</tr>
+</tbody></table>
+<h2 id="5A-4-BDF-扫描顺序"><a href="#5A-4-BDF-扫描顺序" class="headerlink" title="5A.4 BDF 扫描顺序"></a>5A.4 BDF 扫描顺序</h2><p>模块内部用三个寄存器描述当前扫描位置：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">scan_bus_reg</span><br><span class="line">scan_dev_reg</span><br><span class="line">scan_func_reg</span><br></pre></td></tr></table></figure>
+
+<p>当前 BDF 拼接方式是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">current_bdf = &#123;scan_bus_reg, scan_dev_reg[<span class="number">4</span>:<span class="number">0</span>], scan_func_reg&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>扫描从 <code>START_BUS</code> 的 device 0 function 0 开始。每个 function 的基本探测顺序是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">读 Vendor ID / Device ID，offset 0x000</span><br><span class="line">-&gt; 读 Header Type，offset 0x00c</span><br><span class="line">-&gt; 读 Class Code，offset 0x008</span><br><span class="line">-&gt; 根据 Class Code 决定后续动作</span><br></pre></td></tr></table></figure>
+
+<p>如果 Vendor ID 为 <code>16&#39;hffff</code>，说明该 function 不存在，直接推进到下一个 function 或 device。</p>
+<p>如果 function 0 的 Header Type bit[7] 表示 multi-function，则继续扫描 function 1..7；否则只扫描 function 0，然后进入下一个 device。</p>
+<h2 id="5A-5-Class-Code-判断"><a href="#5A-5-Class-Code-判断" class="headerlink" title="5A.5 Class Code 判断"></a>5A.5 Class Code 判断</h2><p>模块重点识别两个 class code：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">NVMe endpoint:  24&#x27;h010802</span><br><span class="line">PCI bridge:     24&#x27;h060400</span><br></pre></td></tr></table></figure>
+
+<p>处理策略是：</p>
+<table>
+<thead>
+<tr>
+<th>设备类型</th>
+<th>处理方式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>NVMe endpoint</td>
+<td>记录 BDF、Vendor ID、Device ID，进入 NVMe BAR 配置流程</td>
+</tr>
+<tr>
+<td>PCI bridge</td>
+<td>配置 bridge bus number、memory window、command register，然后下探 secondary bus</td>
+</tr>
+<tr>
+<td>不存在的 function</td>
+<td>跳过</td>
+</tr>
+<tr>
+<td>其他 endpoint</td>
+<td><code>STRICT_ENDPOINT_FAIL=1</code> 时失败；否则跳过继续扫描</td>
+</tr>
+</tbody></table>
+<p>这里的 <code>STRICT_ENDPOINT_FAIL</code> 很适合调试阶段使用。如果板上预期只有 SSD，那么遇到非 NVMe endpoint 直接失败，可以快速暴露拓扑和预期不一致的问题。如果后续要支持更通用拓扑，可以把它改成 0，跳过非 NVMe 设备。</p>
+<h2 id="5A-6-Bridge-下探逻辑"><a href="#5A-6-Bridge-下探逻辑" class="headerlink" title="5A.6 Bridge 下探逻辑"></a>5A.6 Bridge 下探逻辑</h2><p>深度优先的关键在于：遇到 bridge 时，不是先扫完当前 bus 上所有 device，而是先进入这个 bridge 后面的 secondary bus。</p>
+<p>模块做了三件事：</p>
+<ol>
+<li>写 bridge 的 Bus Number Register，offset <code>0x018</code>。</li>
+<li>写 bridge 的 Memory Base&#x2F;Limit，offset <code>0x020</code>。</li>
+<li>写 bridge 的 Command Register，offset <code>0x004</code>，使能 Memory Space 和 Bus Master。</li>
+</ol>
+<p>对应状态为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">ST_BRIDGE_PREP</span><br><span class="line">-&gt; ST_BRIDGE_BUS_WR</span><br><span class="line">-&gt; ST_BRIDGE_BUS_WAIT</span><br><span class="line">-&gt; ST_BRIDGE_MEM_WR</span><br><span class="line">-&gt; ST_BRIDGE_MEM_WAIT</span><br><span class="line">-&gt; ST_BRIDGE_CMD_WR</span><br><span class="line">-&gt; ST_BRIDGE_CMD_WAIT</span><br><span class="line">-&gt; ST_BRIDGE_ENTER</span><br></pre></td></tr></table></figure>
+
+<p><code>ST_BRIDGE_ENTER</code> 会把当前 bus 的返回点压入栈：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">stack_bus</span><br><span class="line">stack_next_dev</span><br><span class="line">stack_next_func</span><br><span class="line">stack_multifunc</span><br></pre></td></tr></table></figure>
+
+<p>然后进入 newly assigned secondary bus：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">scan_bus  = bridge_secondary_bus</span><br><span class="line">scan_dev  = 0</span><br><span class="line">scan_func = 0</span><br></pre></td></tr></table></figure>
+
+<p>这样就形成了真正的 DFS：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">当前 bus 扫描到 bridge</span><br><span class="line">-&gt; 保存当前 bus 后续扫描位置</span><br><span class="line">-&gt; 进入 bridge 后面的 bus</span><br><span class="line">-&gt; 如果子 bus 扫完没找到，再弹栈回到原 bus 继续</span><br></pre></td></tr></table></figure>
+
+<h2 id="5A-7-NVMe-BAR-配置流程"><a href="#5A-7-NVMe-BAR-配置流程" class="headerlink" title="5A.7 NVMe BAR 配置流程"></a>5A.7 NVMe BAR 配置流程</h2><p>当 class code 匹配 NVMe 后，模块进入 BAR0 探测和配置流程。</p>
+<p>主要状态为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">ST_NVME_READ_BAR0</span><br><span class="line">-&gt; ST_NVME_WR_BAR0_FF</span><br><span class="line">-&gt; ST_NVME_WR_BAR1_FF</span><br><span class="line">-&gt; ST_NVME_RD_BAR0_SIZE</span><br><span class="line">-&gt; ST_NVME_RD_BAR1_SIZE</span><br><span class="line">-&gt; ST_NVME_CALC_BAR</span><br><span class="line">-&gt; ST_NVME_WR_BAR0_BASE</span><br><span class="line">-&gt; ST_NVME_WR_BAR1_BASE</span><br><span class="line">-&gt; ST_NVME_CMD_WR</span><br><span class="line">-&gt; ST_DONE</span><br></pre></td></tr></table></figure>
+
+<p>流程含义如下：</p>
+<ol>
+<li>先读 BAR0 原始值，判断是否是 memory BAR。</li>
+<li>如果 BAR0 表示 64-bit BAR，则 BAR1 也参与 size 探测。</li>
+<li>向 BAR0&#x2F;BAR1 写全 1。</li>
+<li>再读回 BAR0&#x2F;BAR1，得到地址 mask。</li>
+<li>根据 mask 计算 BAR size。</li>
+<li>给 SSD BAR0 分配 <code>NVME_BAR0_BASE = 0x1000_0000</code>。</li>
+<li>如果是 64-bit BAR，把 BAR1 上半部分写为 0。</li>
+<li>写 Command Register 为 <code>0x0006</code>，使能 Memory Space 和 Bus Master。</li>
+</ol>
+<p>BAR size 的计算逻辑在模块中是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">bar0_mask      = bar0_probe_reg &amp; <span class="number">32&#x27;hffff_fff0</span>;</span><br><span class="line">bar0_size_calc = (~bar0_mask) + <span class="number">32&#x27;d1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>64-bit BAR 时会拼接 BAR1 和 BAR0 后再计算。</p>
+<p>对当前工程而言，后续 NVMe 初始化和 doorbell 都按 <code>0x1000_0000</code> 作为 SSD BAR0 基地址访问，所以 DFS 模块的 <code>NVME_BAR0_BASE</code> 必须和 <code>pcie_nvme_init_state.v</code>、<code>SSD_ctl.v</code> 中使用的 BAR0 参数保持一致。</p>
+<h2 id="5A-8-Completion-匹配与超时"><a href="#5A-8-Completion-匹配与超时" class="headerlink" title="5A.8 Completion 匹配与超时"></a>5A.8 Completion 匹配与超时</h2><p>配置读写都是 non-posted 类型，需要等待 completion。模块用 tag 做匹配：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cpl_seen = rx_cpl_tlp_valid[<span class="number">0</span>] &amp;&amp;</span><br><span class="line">           rx_cpl_tlp_sop[<span class="number">0</span>] &amp;&amp;</span><br><span class="line">           (rx_cpl_tlp_hdr[<span class="number">47</span>:<span class="number">40</span>] == pending_tag_reg);</span><br></pre></td></tr></table></figure>
+
+<p>completion status 从 header 中取：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cpl_status = rx_cpl_tlp_hdr[<span class="number">79</span>:<span class="number">77</span>];</span><br></pre></td></tr></table></figure>
+
+<p>其中：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>3&#39;b000</code></td>
+<td>Successful Completion</td>
+</tr>
+<tr>
+<td>非 0</td>
+<td>Completion 异常，进入错误</td>
+</tr>
+<tr>
+<td>超过 <code>CFG_TIMEOUT_CYCLES</code></td>
+<td>认为配置请求超时</td>
+</tr>
+</tbody></table>
+<p>这一点比旧模块更清楚：旧模块里主要按固定 tag 和 retry 流程推进，DFS 模块则把 pending tag、completion status、timeout 整理成统一的 <code>wait_cfg_cpl</code> 任务。</p>
+<h2 id="5A-9-错误码"><a href="#5A-9-错误码" class="headerlink" title="5A.9 错误码"></a>5A.9 错误码</h2><p>当前 DFS 模块定义了这些错误：</p>
+<table>
+<thead>
+<tr>
+<th>错误码</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ERR_NO_NVME</code></td>
+<td>扫描完允许范围后没有找到 NVMe</td>
+</tr>
+<tr>
+<td><code>ERR_UNSUPPORTED_EP</code></td>
+<td>遇到非 NVMe endpoint，且 <code>STRICT_ENDPOINT_FAIL=1</code></td>
+</tr>
+<tr>
+<td><code>ERR_STACK_OVERFLOW</code></td>
+<td>bridge 嵌套超过 <code>STACK_DEPTH</code></td>
+</tr>
+<tr>
+<td><code>ERR_BUS_OVERFLOW</code></td>
+<td>分配 secondary bus 超过 <code>MAX_BUS</code></td>
+</tr>
+<tr>
+<td><code>ERR_CFG_CPL</code></td>
+<td>completion status 异常</td>
+</tr>
+<tr>
+<td><code>ERR_CFG_TIMEOUT</code></td>
+<td>配置请求没有等到 completion</td>
+</tr>
+<tr>
+<td><code>ERR_BAD_BAR</code></td>
+<td>BAR 类型或 size 不符合预期</td>
+</tr>
+<tr>
+<td><code>ERR_BRIDGE_DISABLED</code></td>
+<td>预留的 bridge 相关错误边界</td>
+</tr>
+</tbody></table>
+<p>这些错误码适合接入 ILA&#x2F;VIO 或 AXI-Lite status register。上板时如果 <code>enum_error=1</code>，只看 <code>enum_state</code> 不够，还应该同时看 <code>enum_error_code</code>。</p>
+<h2 id="5A-10-与当前工程的接入关系"><a href="#5A-10-与当前工程的接入关系" class="headerlink" title="5A.10 与当前工程的接入关系"></a>5A.10 与当前工程的接入关系</h2><p>当前主路径中，<code>pcie_us.v</code> 仍然例化：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">pcie_us_enum_state u_pcie_us_enum_state(...)</span><br></pre></td></tr></table></figure>
+
+<p>而 DFS 模块目前是独立文件：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">pcie_us_enum_dfs_state</span><br></pre></td></tr></table></figure>
+
+<p>如果后续真的切到 DFS 版本，至少要处理这些接口差异：</p>
+<ol>
+<li><code>enum_state</code> 从旧模块的 6 bit 变成 DFS 模块的 8 bit。</li>
+<li>旧模块输出名是 <code>pcie_enum_state</code> &#x2F; <code>pcie_enum_done</code>，DFS 模块输出是 <code>enum_state</code> &#x2F; <code>enum_done</code>。</li>
+<li>DFS 额外输出 <code>ssd_bdf</code>、<code>ssd_bar0_base</code>、<code>ssd_bar0_size</code>、<code>ssd_vendor_id</code>、<code>ssd_device_id</code>。</li>
+<li>后续 NVMe 初始化最好使用 DFS 输出的 <code>ssd_bar0_base</code>，而不是永远写死 <code>BAR0_BASE_ADDR</code>。</li>
+<li>如果暂时仍固定使用 <code>0x1000_0000</code>，则要确保 DFS 参数、NVMe init 参数和 SSD_ctl 参数一致。</li>
+</ol>
+<p>当前工程状态可以这样归纳：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">项目中保留了一个深度优先 PCIe 枚举状态机版本，用于从 BDF 扫描、Bridge 下探、Class Code 匹配到 NVMe BAR0 分配的完整枚举流程。当前主路径仍以已上板验证的固定目标枚举为稳定版本，DFS 版本作为后续支持 Switch/多设备拓扑的升级方向。</span><br></pre></td></tr></table></figure>
+
+<p>如果后续你确认已经把 <code>pcie_us.v</code> 切换到 <code>pcie_us_enum_dfs_state.v</code>，这句话可以再改成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">枚举阶段采用深度优先 BDF 扫描，支持在 Bridge/Switch 后发现 NVMe endpoint，并完成 BAR0 探测、地址分配和 Command Register 使能。</span><br></pre></td></tr></table></figure>
+
+<h2 id="5A-11-章节总结"><a href="#5A-11-章节总结" class="headerlink" title="5A.11 章节总结"></a>5A.11 章节总结</h2><p>这部分的核心价值是把 PCIe Root Complex 枚举过程硬件化，并把 BDF 扫描、Bridge 下探、Class Code 判断和 BAR 配置放进明确的状态机流程。</p>
+<p>可以归纳为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">我在 PCIe 初始化阶段设计了一个硬件深度优先枚举状态机，从 START_BUS 开始扫描 bus/device/function，通过配置读写获取 Vendor ID、Header Type 和 Class Code。遇到 PCI bridge 时配置 secondary bus 和 memory window 并下探，遇到 class code 为 010802 的 NVMe endpoint 后进行 BAR0 size probing、BAR 地址分配和 Command Register 使能，为后续 NVMe 初始化提供 BDF 和 BAR 基地址。</span><br></pre></td></tr></table></figure>
+
+<p>这条链路的重点不是“调用 IP 自动枚举”，而是工程里明确处理了：</p>
+<ul>
+<li>CfgRd&#x2F;CfgWr 是通过 RQ 发出的。</li>
+<li>Completion 是通过 RC 收回来的。</li>
+<li>BDF 扫描要考虑 multi-function。</li>
+<li>Bridge 后面要配置 bus number 和 memory window。</li>
+<li>NVMe 是通过 class code <code>01/08/02</code> 判断出来的。</li>
+<li>BAR size 是通过写全 1 再读回 mask 得到的。</li>
+</ul>
+<p>这说明该模块围绕 PCIe Root Complex 枚举过程展开，而不是只按固定寄存器脚本访问单个 BDF。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/" data-id="cmpf3dfkt0008aci71y9571e1" data-title="FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+  
+    <a href="/2026/05/21/fpga-nvme-host-05-init-queue/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">后一篇</strong>
+      <div class="article-nav-title">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">分类</h3>
+    <div class="widget">
+      <ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/">FPGA</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/PCIe/">PCIe</a></li></ul></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Xilinx/" rel="tag">Xilinx</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签云</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 15px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">归档</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/05/">五月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/01/">一月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/09/">九月 2025</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">最新文章</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05-init-queue/">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/">FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/">FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      
+      &copy; 2026 LI HUALOU<br>
+      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+
+<script src="/js/jquery-3.6.4.min.js"></script>
+
+
+
+  
+<script src="/fancybox/jquery.fancybox.min.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="720" viewBox="0 0 1240 720" role="img" aria-labelledby="title desc">
+  <title id="title">PCIe depth-first enumeration flow</title>
+  <desc id="desc">Depth-first PCIe enumeration flow for finding and configuring an NVMe endpoint behind bridges.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.4; rx: 8; ry: 8; }
+      .scan { fill: #eff6ff; }
+      .bridge { fill: #fff7ed; }
+      .nvme { fill: #f0fdf4; }
+      .err { fill: #fef2f2; }
+      .done { fill: #f8fafc; }
+      .box-title { font-size: 16px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .mono { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12px; fill: #334155; }
+      .lane { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 7 6; }
+      .tag { font-size: 13px; fill: #0369a1; font-weight: 700; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1240" height="720" fill="#ffffff"/>
+  <text x="44" y="48" class="title">PCIe 深度优先枚举状态机</text>
+  <text x="44" y="75" class="subtitle">从 START_BUS 开始扫描 BDF；遇到 Bridge 先下探 secondary bus，遇到 NVMe endpoint 后配置 BAR0 与 Command Register</text>
+
+  <rect x="60" y="120" width="230" height="105" class="box scan"/>
+  <text x="84" y="154" class="box-title">等待链路</text>
+  <text x="84" y="182" class="mono">ST_IDLE / ST_WAIT_LINK</text>
+  <text x="84" y="207" class="small">link_up 后初始化扫描指针</text>
+
+  <rect x="360" y="120" width="245" height="105" class="box scan"/>
+  <text x="384" y="154" class="box-title">扫描当前 BDF</text>
+  <text x="384" y="182" class="mono">bus/dev/function</text>
+  <text x="384" y="207" class="small">读 Vendor / Header / Class</text>
+
+  <rect x="675" y="120" width="245" height="105" class="box scan"/>
+  <text x="699" y="154" class="box-title">分类判断</text>
+  <text x="699" y="182" class="mono">010802: NVMe</text>
+  <text x="699" y="207" class="mono">060400: PCI bridge</text>
+
+  <rect x="990" y="120" width="190" height="105" class="box err"/>
+  <text x="1014" y="154" class="box-title">继续或失败</text>
+  <text x="1014" y="182" class="small">非目标 endpoint</text>
+  <text x="1014" y="207" class="mono">STRICT_ENDPOINT_FAIL</text>
+
+  <rect x="170" y="320" width="260" height="125" class="box bridge"/>
+  <text x="194" y="354" class="box-title">Bridge 下探</text>
+  <text x="194" y="382" class="mono">write bus number @0x18</text>
+  <text x="194" y="407" class="mono">write mem window @0x20</text>
+  <text x="194" y="432" class="mono">write command = 0x0006</text>
+
+  <rect x="505" y="320" width="260" height="125" class="box bridge"/>
+  <text x="529" y="354" class="box-title">栈保存返回点</text>
+  <text x="529" y="382" class="small">保存当前 bus 的下一个 dev/func</text>
+  <text x="529" y="407" class="small">进入 secondary bus</text>
+  <text x="529" y="432" class="mono">STACK_DEPTH = 8</text>
+
+  <rect x="840" y="320" width="260" height="125" class="box nvme"/>
+  <text x="864" y="354" class="box-title">NVMe endpoint 配置</text>
+  <text x="864" y="382" class="mono">probe BAR0 / BAR1</text>
+  <text x="864" y="407" class="mono">calc BAR size</text>
+  <text x="864" y="432" class="mono">assign BAR0 = 0x1000_0000</text>
+
+  <rect x="170" y="545" width="260" height="105" class="box scan"/>
+  <text x="194" y="579" class="box-title">Bus 扫描结束</text>
+  <text x="194" y="607" class="small">若栈非空，弹出返回点</text>
+  <text x="194" y="632" class="small">否则未找到 NVMe</text>
+
+  <rect x="505" y="545" width="260" height="105" class="box done"/>
+  <text x="529" y="579" class="box-title">枚举完成</text>
+  <text x="529" y="607" class="mono">ssd_found / ssd_bdf</text>
+  <text x="529" y="632" class="mono">ssd_bar0_base / size</text>
+
+  <rect x="840" y="545" width="260" height="105" class="box err"/>
+  <text x="864" y="579" class="box-title">错误边界</text>
+  <text x="864" y="607" class="mono">timeout / bad BAR</text>
+  <text x="864" y="632" class="mono">no NVMe / stack overflow</text>
+
+  <path d="M290 172 C320 172 330 172 358 172" class="lane"/>
+  <path d="M605 172 C635 172 645 172 673 172" class="lane"/>
+  <path d="M920 172 C950 172 960 172 988 172" class="lane"/>
+
+  <path d="M785 225 C750 270 375 270 300 318" class="lane"/>
+  <path d="M430 382 C460 382 475 382 503 382" class="lane"/>
+  <path d="M635 320 C635 280 500 255 485 227" class="lane dash"/>
+  <path d="M780 225 C820 270 930 280 970 318" class="lane"/>
+  <path d="M970 445 C970 490 665 500 635 543" class="lane"/>
+  <path d="M300 445 C300 490 300 510 300 543" class="lane"/>
+  <path d="M430 598 C460 598 475 598 503 598" class="lane"/>
+  <path d="M765 598 C795 598 810 598 838 598" class="lane dash"/>
+
+  <text x="312" y="154" class="tag">CfgRd0/1</text>
+  <text x="615" y="154" class="tag">class code</text>
+  <text x="210" y="292" class="tag">bridge first</text>
+  <text x="875" y="292" class="tag">target found</text>
+  <text x="332" y="515" class="tag">pop stack</text>
+</svg>

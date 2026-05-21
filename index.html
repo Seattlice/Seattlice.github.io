@@ -78,6 +78,1226 @@
       <div class="outer">
         <section id="main">
   
+    <article id="post-fpga-nvme-host-05a-pcie-dfs-enum" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T16:40:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="p-name article-title" href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>本章以最新工程中的 <code>pcie_us_enum_dfs_state.v</code> 为主。需要注意：该模块当前是独立 DFS 枚举版本，源码注释中也明确写了它还没有直接替换 <code>pcie_us_enum_state.v</code>。因此这里记录的是深度优先枚举设计方案与当前接入状态，不表示当前 <code>pcie_us.v</code> 主路径已经切换完成。</p>
+</blockquote>
+<p><img src="/images/nvme-host/5a-pcie-dfs-enum-flow.svg" alt="图 5A-1 PCIe 深度优先枚举状态机"></p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#5A-1-PCIe-%E6%9E%9A%E4%B8%BE%E5%8E%9F%E7%90%86">5A.1 PCIe 枚举原理</a></li>
+<li><a href="#5A-2-%E4%B8%BA%E4%BB%80%E4%B9%88%E8%A6%81%E6%94%B9%E6%88%90%E6%B7%B1%E5%BA%A6%E4%BC%98%E5%85%88%E6%9E%9A%E4%B8%BE">5A.2 为什么要改成深度优先枚举</a></li>
+<li><a href="#5A-3-%E6%A8%A1%E5%9D%97%E5%AE%9A%E4%BD%8D">5A.3 模块定位</a></li>
+<li><a href="#5A-4-BDF-%E6%89%AB%E6%8F%8F%E9%A1%BA%E5%BA%8F">5A.4 BDF 扫描顺序</a></li>
+<li><a href="#5A-5-Class-Code-%E5%88%A4%E6%96%AD">5A.5 Class Code 判断</a></li>
+<li><a href="#5A-6-Bridge-%E4%B8%8B%E6%8E%A2%E9%80%BB%E8%BE%91">5A.6 Bridge 下探逻辑</a></li>
+<li><a href="#5A-7-NVMe-BAR-%E9%85%8D%E7%BD%AE%E6%B5%81%E7%A8%8B">5A.7 NVMe BAR 配置流程</a></li>
+<li><a href="#5A-8-Completion-%E5%8C%B9%E9%85%8D%E4%B8%8E%E8%B6%85%E6%97%B6">5A.8 Completion 匹配与超时</a></li>
+<li><a href="#5A-9-%E9%94%99%E8%AF%AF%E7%A0%81">5A.9 错误码</a></li>
+<li><a href="#5A-10-%E4%B8%8E%E5%BD%93%E5%89%8D%E5%B7%A5%E7%A8%8B%E7%9A%84%E6%8E%A5%E5%85%A5%E5%85%B3%E7%B3%BB">5A.10 与当前工程的接入关系</a></li>
+<li><a href="#5A-11-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">5A.11 章节总结</a></li>
+</ul>
+<h2 id="5A-1-PCIe-枚举原理"><a href="#5A-1-PCIe-枚举原理" class="headerlink" title="5A.1 PCIe 枚举原理"></a>5A.1 PCIe 枚举原理</h2><p>PCIe 枚举本质上是 Root Complex 对下游设备配置空间的扫描和配置过程。FPGA 在这个项目里扮演的是主机侧逻辑，所以它需要主动发起 Configuration Read &#x2F; Configuration Write，通过配置空间判断链路后面挂着什么设备、这个设备在哪个 BDF 上、BAR 空间需要多大，以及后续 NVMe 初始化应该访问哪个 MMIO 基地址。</p>
+<p>一个 PCIe function 由 BDF 标识：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">BDF = Bus Number + Device Number + Function Number</span><br></pre></td></tr></table></figure>
+
+<p>在 TLP 通道上，这个过程主要使用 RQ 和 RC：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">RQ: FPGA 发出 CfgRd / CfgWr</span><br><span class="line">RC: 设备或 Bridge 返回 Completion</span><br></pre></td></tr></table></figure>
+
+<p>配置空间里最先要看的几个 offset 是固定的：</p>
+<table>
+<thead>
+<tr>
+<th>Offset</th>
+<th>内容</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0x000</code></td>
+<td>Vendor ID &#x2F; Device ID</td>
+<td>判断 function 是否存在，<code>Vendor ID = 16&#39;hffff</code> 表示不存在</td>
+</tr>
+<tr>
+<td><code>0x004</code></td>
+<td>Command Register</td>
+<td>最后使能 Memory Space、Bus Master</td>
+</tr>
+<tr>
+<td><code>0x008</code></td>
+<td>Revision ID &#x2F; Class Code</td>
+<td>判断设备类型，NVMe 为 <code>24&#39;h010802</code></td>
+</tr>
+<tr>
+<td><code>0x00c</code></td>
+<td>Header Type</td>
+<td>判断 endpoint &#x2F; bridge，以及 function 0 是否是 multi-function</td>
+</tr>
+<tr>
+<td><code>0x010</code></td>
+<td>BAR0</td>
+<td>探测和配置 endpoint 的 MMIO 空间</td>
+</tr>
+<tr>
+<td><code>0x018</code></td>
+<td>Bridge Bus Number</td>
+<td>bridge 设备上配置 primary &#x2F; secondary &#x2F; subordinate bus</td>
+</tr>
+<tr>
+<td><code>0x020</code></td>
+<td>Bridge Memory Base &#x2F; Limit</td>
+<td>bridge 设备上配置下游 memory window</td>
+</tr>
+</tbody></table>
+<p>普通 endpoint 的枚举比较直接：先读 Vendor ID 确认 function 存在，再读 Header Type 和 Class Code。如果 Class Code 是 NVMe，就进入 BAR 探测：向 BAR 写全 1，再读回 mask，由 mask 计算 BAR size，最后写入工程规划好的 BAR base，并写 Command Register 打开 Memory Space 和 Bus Master。</p>
+<p>Bridge 的处理更特殊。Root Complex 不能只扫描当前 bus，因为 PCIe Switch 或桥后面的设备在 secondary bus 上。遇到 Class Code 为 <code>24&#39;h060400</code> 的 PCI bridge 时，需要先给 bridge 分配 secondary bus，配置 memory window，再进入 secondary bus 扫描。深度优先枚举就是在这里体现出来的：遇到 bridge 后优先下探桥后面的 bus，子 bus 扫描结束后再回到原 bus 的下一个 device&#x2F;function。</p>
+<p>当前 DFS 模块把这套流程做成了硬件状态机，关键判断和工程源码是一一对应的：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] current_bdf = &#123;scan_bus_reg, scan_dev_reg[<span class="number">4</span>:<span class="number">0</span>], scan_func_reg&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">23</span>:<span class="number">0</span>] CLASS_NVME       = <span class="number">24&#x27;h010802</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">23</span>:<span class="number">0</span>] CLASS_PCI_BRIDGE = <span class="number">24&#x27;h060400</span>;</span><br></pre></td></tr></table></figure>
+
+<p>BDF 的基础扫描顺序是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">ST_READ_VENDOR: issue_cfg_read(current_bdf, <span class="number">12&#x27;h000</span>, ST_WAIT_VENDOR);</span><br><span class="line">ST_READ_HEADER: issue_cfg_read(current_bdf, <span class="number">12&#x27;h00c</span>, ST_WAIT_HEADER);</span><br><span class="line">ST_READ_CLASS:  issue_cfg_read(current_bdf, <span class="number">12&#x27;h008</span>, ST_WAIT_CLASS);</span><br></pre></td></tr></table></figure>
+
+<p>Class Code 判断决定后面的路径：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (class_code_reg == CLASS_NVME) <span class="keyword">begin</span></span><br><span class="line">    ssd_found_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    ssd_bdf_next = current_bdf;</span><br><span class="line">    state_next = ST_NVME_READ_BAR0;</span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (class_code_reg == CLASS_PCI_BRIDGE) <span class="keyword">begin</span></span><br><span class="line">    state_next = ST_BRIDGE_PREP;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>配置请求都是 non-posted request，不能只看请求发出去，还必须等 RC completion 回来。模块用 tag 记录 outstanding 的配置请求，并在 RC 侧匹配 completion：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> cpl_seen = rx_cpl_tlp_valid[<span class="number">0</span>] &amp;&amp; rx_cpl_tlp_sop[<span class="number">0</span>] &amp;&amp;</span><br><span class="line">                (rx_cpl_tlp_hdr[<span class="number">47</span>:<span class="number">40</span>] == pending_tag_reg);</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">2</span>:<span class="number">0</span>] cpl_status = rx_cpl_tlp_hdr[<span class="number">79</span>:<span class="number">77</span>];</span><br></pre></td></tr></table></figure>
+
+<p>所以枚举模块的核心不是“顺序读几个寄存器”这么简单，而是一个完整的配置事务闭环：发 CfgRd &#x2F; CfgWr、等待 completion、检查 status、根据设备类型切换扫描路径，并把最终找到的 <code>ssd_bdf</code> 和 <code>ssd_bar0_base</code> 交给后面的 NVMe 初始化状态机。</p>
+<h2 id="5A-2-为什么要改成深度优先枚举"><a href="#5A-2-为什么要改成深度优先枚举" class="headerlink" title="5A.2 为什么要改成深度优先枚举"></a>5A.2 为什么要改成深度优先枚举</h2><p>早期枚举模块 <code>pcie_us_enum_state.v</code> 更像是面向单个固定 SSD 的初始化脚本。它默认目标 BDF 接近 <code>01:00.0</code>，直接读 Vendor ID、探测 BAR、写 BAR 地址、写 Command Register，然后读 NVMe CAP 验证链路。</p>
+<p>这种方式适合第一阶段上板验证，因为最短路径清楚，能快速证明 FPGA 可以通过 RQ&#x2F;RC 和 SSD 配置空间通信。但它的问题也明显：</p>
+<ul>
+<li>如果 SSD 不在固定 BDF 上，枚举会失败。</li>
+<li>如果链路后面挂了 PCIe Switch，旧流程不会进入 secondary bus。</li>
+<li>如果挂了多个 endpoint，旧流程无法判断哪个设备才是 NVMe。</li>
+<li>从枚举完整性看，它更像固定设备 Bring-up，不像完整的 Root Complex 枚举流程。</li>
+</ul>
+<p><code>pcie_us_enum_dfs_state.v</code> 的目标，是把这部分升级为更标准的硬件枚举流程：从一个起始 bus 开始扫描 BDF，遇到 PCI bridge 就配置桥并优先下探它的 secondary bus，直到找到 class code 为 NVMe 的 endpoint。</p>
+<h2 id="5A-3-模块定位"><a href="#5A-3-模块定位" class="headerlink" title="5A.3 模块定位"></a>5A.3 模块定位</h2><p>DFS 枚举模块仍然使用工程中已有的 TLP 通路：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">RQ: FPGA 发 CfgRd / CfgWr</span><br><span class="line">RC: SSD 或 Bridge 返回 Completion</span><br></pre></td></tr></table></figure>
+
+<p>它不参与后续 IO 数据路径，也不处理 SSD 主动访问 FPGA 地址空间的 CQ&#x2F;CC 路径。枚举结束后，它应该输出 SSD 的关键身份信息，供后续 NVMe 初始化使用。</p>
+<p>核心输出为：</p>
+<table>
+<thead>
+<tr>
+<th>输出</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>enum_done</code></td>
+<td>DFS 枚举成功完成</td>
+</tr>
+<tr>
+<td><code>enum_error</code></td>
+<td>DFS 枚举失败</td>
+</tr>
+<tr>
+<td><code>enum_error_code</code></td>
+<td>失败原因</td>
+</tr>
+<tr>
+<td><code>ssd_found</code></td>
+<td>找到 NVMe endpoint</td>
+</tr>
+<tr>
+<td><code>ssd_bdf</code></td>
+<td>SSD 的 Bus&#x2F;Device&#x2F;Function</td>
+</tr>
+<tr>
+<td><code>ssd_bar0_base</code></td>
+<td>分配给 SSD BAR0 的基地址</td>
+</tr>
+<tr>
+<td><code>ssd_bar0_size</code></td>
+<td>探测出的 BAR0 空间大小</td>
+</tr>
+<tr>
+<td><code>ssd_class_code</code></td>
+<td>SSD class code，NVMe 应为 <code>24&#39;h010802</code></td>
+</tr>
+<tr>
+<td><code>ssd_vendor_id</code> &#x2F; <code>ssd_device_id</code></td>
+<td>配置空间 offset <code>0x00</code> 读出的设备身份</td>
+</tr>
+</tbody></table>
+<p>当前参数里比较重要的是：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>当前值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>REQUESTER_ID</code></td>
+<td><code>16&#39;h0000</code></td>
+<td>FPGA Root Complex 发起配置请求时使用的 Requester ID</td>
+</tr>
+<tr>
+<td><code>START_BUS</code></td>
+<td><code>8&#39;d1</code></td>
+<td>从 bus 1 开始扫描</td>
+</tr>
+<tr>
+<td><code>MAX_BUS</code></td>
+<td><code>8&#39;d16</code></td>
+<td>最大扫描到 bus 16</td>
+</tr>
+<tr>
+<td><code>STACK_DEPTH</code></td>
+<td><code>8</code></td>
+<td>bridge 下探返回栈深度</td>
+</tr>
+<tr>
+<td><code>NVME_BAR0_BASE</code></td>
+<td><code>32&#39;h1000_0000</code></td>
+<td>分配给 NVMe BAR0 的地址</td>
+</tr>
+<tr>
+<td><code>BRIDGE_MEM_WINDOW_SIZE</code></td>
+<td><code>32&#39;h0100_0000</code></td>
+<td>给 bridge 配置的 memory window 大小</td>
+</tr>
+<tr>
+<td><code>CFG_TIMEOUT_CYCLES</code></td>
+<td><code>100000</code></td>
+<td>配置请求 completion 等待超时</td>
+</tr>
+<tr>
+<td><code>STRICT_ENDPOINT_FAIL</code></td>
+<td><code>1</code></td>
+<td>遇到非 NVMe endpoint 时是否直接失败</td>
+</tr>
+</tbody></table>
+<h2 id="5A-4-BDF-扫描顺序"><a href="#5A-4-BDF-扫描顺序" class="headerlink" title="5A.4 BDF 扫描顺序"></a>5A.4 BDF 扫描顺序</h2><p>模块内部用三个寄存器描述当前扫描位置：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">scan_bus_reg</span><br><span class="line">scan_dev_reg</span><br><span class="line">scan_func_reg</span><br></pre></td></tr></table></figure>
+
+<p>当前 BDF 拼接方式是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">current_bdf = &#123;scan_bus_reg, scan_dev_reg[<span class="number">4</span>:<span class="number">0</span>], scan_func_reg&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>扫描从 <code>START_BUS</code> 的 device 0 function 0 开始。每个 function 的基本探测顺序是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">读 Vendor ID / Device ID，offset 0x000</span><br><span class="line">-&gt; 读 Header Type，offset 0x00c</span><br><span class="line">-&gt; 读 Class Code，offset 0x008</span><br><span class="line">-&gt; 根据 Class Code 决定后续动作</span><br></pre></td></tr></table></figure>
+
+<p>如果 Vendor ID 为 <code>16&#39;hffff</code>，说明该 function 不存在，直接推进到下一个 function 或 device。</p>
+<p>如果 function 0 的 Header Type bit[7] 表示 multi-function，则继续扫描 function 1..7；否则只扫描 function 0，然后进入下一个 device。</p>
+<h2 id="5A-5-Class-Code-判断"><a href="#5A-5-Class-Code-判断" class="headerlink" title="5A.5 Class Code 判断"></a>5A.5 Class Code 判断</h2><p>模块重点识别两个 class code：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">NVMe endpoint:  24&#x27;h010802</span><br><span class="line">PCI bridge:     24&#x27;h060400</span><br></pre></td></tr></table></figure>
+
+<p>处理策略是：</p>
+<table>
+<thead>
+<tr>
+<th>设备类型</th>
+<th>处理方式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>NVMe endpoint</td>
+<td>记录 BDF、Vendor ID、Device ID，进入 NVMe BAR 配置流程</td>
+</tr>
+<tr>
+<td>PCI bridge</td>
+<td>配置 bridge bus number、memory window、command register，然后下探 secondary bus</td>
+</tr>
+<tr>
+<td>不存在的 function</td>
+<td>跳过</td>
+</tr>
+<tr>
+<td>其他 endpoint</td>
+<td><code>STRICT_ENDPOINT_FAIL=1</code> 时失败；否则跳过继续扫描</td>
+</tr>
+</tbody></table>
+<p>这里的 <code>STRICT_ENDPOINT_FAIL</code> 很适合调试阶段使用。如果板上预期只有 SSD，那么遇到非 NVMe endpoint 直接失败，可以快速暴露拓扑和预期不一致的问题。如果后续要支持更通用拓扑，可以把它改成 0，跳过非 NVMe 设备。</p>
+<h2 id="5A-6-Bridge-下探逻辑"><a href="#5A-6-Bridge-下探逻辑" class="headerlink" title="5A.6 Bridge 下探逻辑"></a>5A.6 Bridge 下探逻辑</h2><p>深度优先的关键在于：遇到 bridge 时，不是先扫完当前 bus 上所有 device，而是先进入这个 bridge 后面的 secondary bus。</p>
+<p>模块做了三件事：</p>
+<ol>
+<li>写 bridge 的 Bus Number Register，offset <code>0x018</code>。</li>
+<li>写 bridge 的 Memory Base&#x2F;Limit，offset <code>0x020</code>。</li>
+<li>写 bridge 的 Command Register，offset <code>0x004</code>，使能 Memory Space 和 Bus Master。</li>
+</ol>
+<p>对应状态为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">ST_BRIDGE_PREP</span><br><span class="line">-&gt; ST_BRIDGE_BUS_WR</span><br><span class="line">-&gt; ST_BRIDGE_BUS_WAIT</span><br><span class="line">-&gt; ST_BRIDGE_MEM_WR</span><br><span class="line">-&gt; ST_BRIDGE_MEM_WAIT</span><br><span class="line">-&gt; ST_BRIDGE_CMD_WR</span><br><span class="line">-&gt; ST_BRIDGE_CMD_WAIT</span><br><span class="line">-&gt; ST_BRIDGE_ENTER</span><br></pre></td></tr></table></figure>
+
+<p><code>ST_BRIDGE_ENTER</code> 会把当前 bus 的返回点压入栈：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">stack_bus</span><br><span class="line">stack_next_dev</span><br><span class="line">stack_next_func</span><br><span class="line">stack_multifunc</span><br></pre></td></tr></table></figure>
+
+<p>然后进入 newly assigned secondary bus：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">scan_bus  = bridge_secondary_bus</span><br><span class="line">scan_dev  = 0</span><br><span class="line">scan_func = 0</span><br></pre></td></tr></table></figure>
+
+<p>这样就形成了真正的 DFS：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">当前 bus 扫描到 bridge</span><br><span class="line">-&gt; 保存当前 bus 后续扫描位置</span><br><span class="line">-&gt; 进入 bridge 后面的 bus</span><br><span class="line">-&gt; 如果子 bus 扫完没找到，再弹栈回到原 bus 继续</span><br></pre></td></tr></table></figure>
+
+<h2 id="5A-7-NVMe-BAR-配置流程"><a href="#5A-7-NVMe-BAR-配置流程" class="headerlink" title="5A.7 NVMe BAR 配置流程"></a>5A.7 NVMe BAR 配置流程</h2><p>当 class code 匹配 NVMe 后，模块进入 BAR0 探测和配置流程。</p>
+<p>主要状态为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">ST_NVME_READ_BAR0</span><br><span class="line">-&gt; ST_NVME_WR_BAR0_FF</span><br><span class="line">-&gt; ST_NVME_WR_BAR1_FF</span><br><span class="line">-&gt; ST_NVME_RD_BAR0_SIZE</span><br><span class="line">-&gt; ST_NVME_RD_BAR1_SIZE</span><br><span class="line">-&gt; ST_NVME_CALC_BAR</span><br><span class="line">-&gt; ST_NVME_WR_BAR0_BASE</span><br><span class="line">-&gt; ST_NVME_WR_BAR1_BASE</span><br><span class="line">-&gt; ST_NVME_CMD_WR</span><br><span class="line">-&gt; ST_DONE</span><br></pre></td></tr></table></figure>
+
+<p>流程含义如下：</p>
+<ol>
+<li>先读 BAR0 原始值，判断是否是 memory BAR。</li>
+<li>如果 BAR0 表示 64-bit BAR，则 BAR1 也参与 size 探测。</li>
+<li>向 BAR0&#x2F;BAR1 写全 1。</li>
+<li>再读回 BAR0&#x2F;BAR1，得到地址 mask。</li>
+<li>根据 mask 计算 BAR size。</li>
+<li>给 SSD BAR0 分配 <code>NVME_BAR0_BASE = 0x1000_0000</code>。</li>
+<li>如果是 64-bit BAR，把 BAR1 上半部分写为 0。</li>
+<li>写 Command Register 为 <code>0x0006</code>，使能 Memory Space 和 Bus Master。</li>
+</ol>
+<p>BAR size 的计算逻辑在模块中是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">bar0_mask      = bar0_probe_reg &amp; <span class="number">32&#x27;hffff_fff0</span>;</span><br><span class="line">bar0_size_calc = (~bar0_mask) + <span class="number">32&#x27;d1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>64-bit BAR 时会拼接 BAR1 和 BAR0 后再计算。</p>
+<p>对当前工程而言，后续 NVMe 初始化和 doorbell 都按 <code>0x1000_0000</code> 作为 SSD BAR0 基地址访问，所以 DFS 模块的 <code>NVME_BAR0_BASE</code> 必须和 <code>pcie_nvme_init_state.v</code>、<code>SSD_ctl.v</code> 中使用的 BAR0 参数保持一致。</p>
+<h2 id="5A-8-Completion-匹配与超时"><a href="#5A-8-Completion-匹配与超时" class="headerlink" title="5A.8 Completion 匹配与超时"></a>5A.8 Completion 匹配与超时</h2><p>配置读写都是 non-posted 类型，需要等待 completion。模块用 tag 做匹配：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">cpl_seen = rx_cpl_tlp_valid[<span class="number">0</span>] &amp;&amp;</span><br><span class="line">           rx_cpl_tlp_sop[<span class="number">0</span>] &amp;&amp;</span><br><span class="line">           (rx_cpl_tlp_hdr[<span class="number">47</span>:<span class="number">40</span>] == pending_tag_reg);</span><br></pre></td></tr></table></figure>
+
+<p>completion status 从 header 中取：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cpl_status = rx_cpl_tlp_hdr[<span class="number">79</span>:<span class="number">77</span>];</span><br></pre></td></tr></table></figure>
+
+<p>其中：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>3&#39;b000</code></td>
+<td>Successful Completion</td>
+</tr>
+<tr>
+<td>非 0</td>
+<td>Completion 异常，进入错误</td>
+</tr>
+<tr>
+<td>超过 <code>CFG_TIMEOUT_CYCLES</code></td>
+<td>认为配置请求超时</td>
+</tr>
+</tbody></table>
+<p>这一点比旧模块更清楚：旧模块里主要按固定 tag 和 retry 流程推进，DFS 模块则把 pending tag、completion status、timeout 整理成统一的 <code>wait_cfg_cpl</code> 任务。</p>
+<h2 id="5A-9-错误码"><a href="#5A-9-错误码" class="headerlink" title="5A.9 错误码"></a>5A.9 错误码</h2><p>当前 DFS 模块定义了这些错误：</p>
+<table>
+<thead>
+<tr>
+<th>错误码</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ERR_NO_NVME</code></td>
+<td>扫描完允许范围后没有找到 NVMe</td>
+</tr>
+<tr>
+<td><code>ERR_UNSUPPORTED_EP</code></td>
+<td>遇到非 NVMe endpoint，且 <code>STRICT_ENDPOINT_FAIL=1</code></td>
+</tr>
+<tr>
+<td><code>ERR_STACK_OVERFLOW</code></td>
+<td>bridge 嵌套超过 <code>STACK_DEPTH</code></td>
+</tr>
+<tr>
+<td><code>ERR_BUS_OVERFLOW</code></td>
+<td>分配 secondary bus 超过 <code>MAX_BUS</code></td>
+</tr>
+<tr>
+<td><code>ERR_CFG_CPL</code></td>
+<td>completion status 异常</td>
+</tr>
+<tr>
+<td><code>ERR_CFG_TIMEOUT</code></td>
+<td>配置请求没有等到 completion</td>
+</tr>
+<tr>
+<td><code>ERR_BAD_BAR</code></td>
+<td>BAR 类型或 size 不符合预期</td>
+</tr>
+<tr>
+<td><code>ERR_BRIDGE_DISABLED</code></td>
+<td>预留的 bridge 相关错误边界</td>
+</tr>
+</tbody></table>
+<p>这些错误码适合接入 ILA&#x2F;VIO 或 AXI-Lite status register。上板时如果 <code>enum_error=1</code>，只看 <code>enum_state</code> 不够，还应该同时看 <code>enum_error_code</code>。</p>
+<h2 id="5A-10-与当前工程的接入关系"><a href="#5A-10-与当前工程的接入关系" class="headerlink" title="5A.10 与当前工程的接入关系"></a>5A.10 与当前工程的接入关系</h2><p>当前主路径中，<code>pcie_us.v</code> 仍然例化：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">pcie_us_enum_state u_pcie_us_enum_state(...)</span><br></pre></td></tr></table></figure>
+
+<p>而 DFS 模块目前是独立文件：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">pcie_us_enum_dfs_state</span><br></pre></td></tr></table></figure>
+
+<p>如果后续真的切到 DFS 版本，至少要处理这些接口差异：</p>
+<ol>
+<li><code>enum_state</code> 从旧模块的 6 bit 变成 DFS 模块的 8 bit。</li>
+<li>旧模块输出名是 <code>pcie_enum_state</code> &#x2F; <code>pcie_enum_done</code>，DFS 模块输出是 <code>enum_state</code> &#x2F; <code>enum_done</code>。</li>
+<li>DFS 额外输出 <code>ssd_bdf</code>、<code>ssd_bar0_base</code>、<code>ssd_bar0_size</code>、<code>ssd_vendor_id</code>、<code>ssd_device_id</code>。</li>
+<li>后续 NVMe 初始化最好使用 DFS 输出的 <code>ssd_bar0_base</code>，而不是永远写死 <code>BAR0_BASE_ADDR</code>。</li>
+<li>如果暂时仍固定使用 <code>0x1000_0000</code>，则要确保 DFS 参数、NVMe init 参数和 SSD_ctl 参数一致。</li>
+</ol>
+<p>当前工程状态可以这样归纳：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">项目中保留了一个深度优先 PCIe 枚举状态机版本，用于从 BDF 扫描、Bridge 下探、Class Code 匹配到 NVMe BAR0 分配的完整枚举流程。当前主路径仍以已上板验证的固定目标枚举为稳定版本，DFS 版本作为后续支持 Switch/多设备拓扑的升级方向。</span><br></pre></td></tr></table></figure>
+
+<p>如果后续你确认已经把 <code>pcie_us.v</code> 切换到 <code>pcie_us_enum_dfs_state.v</code>，这句话可以再改成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">枚举阶段采用深度优先 BDF 扫描，支持在 Bridge/Switch 后发现 NVMe endpoint，并完成 BAR0 探测、地址分配和 Command Register 使能。</span><br></pre></td></tr></table></figure>
+
+<h2 id="5A-11-章节总结"><a href="#5A-11-章节总结" class="headerlink" title="5A.11 章节总结"></a>5A.11 章节总结</h2><p>这部分的核心价值是把 PCIe Root Complex 枚举过程硬件化，并把 BDF 扫描、Bridge 下探、Class Code 判断和 BAR 配置放进明确的状态机流程。</p>
+<p>可以归纳为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">我在 PCIe 初始化阶段设计了一个硬件深度优先枚举状态机，从 START_BUS 开始扫描 bus/device/function，通过配置读写获取 Vendor ID、Header Type 和 Class Code。遇到 PCI bridge 时配置 secondary bus 和 memory window 并下探，遇到 class code 为 010802 的 NVMe endpoint 后进行 BAR0 size probing、BAR 地址分配和 Command Register 使能，为后续 NVMe 初始化提供 BDF 和 BAR 基地址。</span><br></pre></td></tr></table></figure>
+
+<p>这条链路的重点不是“调用 IP 自动枚举”，而是工程里明确处理了：</p>
+<ul>
+<li>CfgRd&#x2F;CfgWr 是通过 RQ 发出的。</li>
+<li>Completion 是通过 RC 收回来的。</li>
+<li>BDF 扫描要考虑 multi-function。</li>
+<li>Bridge 后面要配置 bus number 和 memory window。</li>
+<li>NVMe 是通过 class code <code>01/08/02</code> 判断出来的。</li>
+<li>BAR size 是通过写全 1 再读回 mask 得到的。</li>
+</ul>
+<p>这说明该模块围绕 PCIe Root Complex 枚举过程展开，而不是只按固定寄存器脚本访问单个 BDF。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/" data-id="cmpf3dfkt0008aci71y9571e1" data-title="FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+
+  
+    <article id="post-fpga-nvme-host-05-init-queue" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-05-init-queue/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T16:30:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="p-name article-title" href="/2026/05/21/fpga-nvme-host-05-init-queue/">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>本章以 <code>pcie_nvme_init_state.v</code>、<code>ADMIN_queue_init.v</code>、<code>nvme_command_ctl.v</code>、<code>ssd_top.v</code> 和 <code>SSD_ctl.v</code> 为准。PCIe 枚举部分同时参考独立 DFS 版本 <code>pcie_us_enum_dfs_state.v</code>，但当前主路径仍要以实际例化情况为准。</p>
+</blockquote>
+<p><img src="/images/nvme-host/5-init-queue-flow.svg" alt="图 5-1 NVMe 初始化与队列建立流程"></p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#5-1-%E6%9C%AC%E7%AB%A0%E5%AE%9A%E4%BD%8D">5.1 本章定位</a></li>
+<li><a href="#5-2-PCIe-%E6%B7%B1%E5%BA%A6%E4%BC%98%E5%85%88%E6%9E%9A%E4%B8%BE%E4%B8%8E-NVMe-%E5%88%9D%E5%A7%8B%E5%8C%96%E7%9A%84%E5%85%B3%E7%B3%BB">5.2 PCIe 深度优先枚举与 NVMe 初始化的关系</a></li>
+<li><a href="#5-3-Admin-Queue-%E5%88%9D%E5%A7%8B%E5%8C%96%E6%B5%81%E7%A8%8B">5.3 Admin Queue 初始化流程</a></li>
+<li><a href="#5-4-IO-Queue-%E5%88%9B%E5%BB%BA%E6%B5%81%E7%A8%8B">5.4 IO Queue 创建流程</a></li>
+<li><a href="#5-5-done-%E4%BF%A1%E5%8F%B7%E7%9A%84%E8%81%8C%E8%B4%A3">5.5 done 信号的职责</a></li>
+<li><a href="#5-6-%E5%9C%B0%E5%9D%80%E4%B8%80%E8%87%B4%E6%80%A7%E6%A3%80%E6%9F%A5">5.6 地址一致性检查</a></li>
+<li><a href="#5-7-%E4%B8%8A%E6%9D%BF%E8%A7%82%E6%B5%8B%E7%82%B9">5.7 上板观测点</a></li>
+<li><a href="#5-8-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">5.8 章节总结</a></li>
+</ul>
+<h2 id="5-1-本章定位"><a href="#5-1-本章定位" class="headerlink" title="5.1 本章定位"></a>5.1 本章定位</h2><p>初始化阶段的目标，是把 SSD 从 PCIe 链路刚建立的状态，推进到可以接收 IO Read&#x2F;Write 命令的状态。</p>
+<p>当前工程里这部分可以分成两段：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">pcie_nvme_init_state</span><br><span class="line">    完成 PCIe/NVMe 基础寄存器初始化，建立 Admin Queue。</span><br><span class="line"></span><br><span class="line">ADMIN_queue_init</span><br><span class="line">    通过 Admin 命令创建 IO Completion Queue 和 IO Submission Queue。</span><br></pre></td></tr></table></figure>
+
+<p>也就是说：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">第一段是写 NVMe 控制器寄存器。</span><br><span class="line">第二段是通过 Admin Queue 发 NVMe Admin Command。</span><br></pre></td></tr></table></figure>
+
+<p>这两个阶段完成之后，上层才应该认为 <code>queue_init_done</code> 有效，后续 16KB Write&#x2F;Read 测试才能启动。</p>
+<p>在顶层 <code>ssd_top.v</code> 里，初始化命令源和运行时命令源是分阶段使用的。队列初始化完成前，<code>nvme_command_ctl</code> 负责送出 Create IO CQ &#x2F; Create IO SQ；队列初始化完成后，这条 legacy Admin 命令入口会被关闭，后续命令交给 AXI-Lite 或外部 command descriptor。</p>
+<p>关键连接可以简化成下面这样：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> ssd_cmd_command_type = admin_queue_init_done ? <span class="number">2&#x27;d0</span>  : admin_cmd_command_type;</span><br><span class="line"><span class="keyword">assign</span> ssd_cmd_opcode       = admin_queue_init_done ? <span class="number">8&#x27;d0</span>  : admin_cmd_opcode;</span><br><span class="line"><span class="keyword">assign</span> ssd_cmd_nsid         = admin_queue_init_done ? <span class="number">32&#x27;d0</span> : admin_cmd_nsid;</span><br><span class="line"><span class="keyword">assign</span> ssd_cmd_addr         = admin_queue_init_done ? <span class="number">64&#x27;d0</span> : admin_cmd_addr;</span><br><span class="line"><span class="keyword">assign</span> ssd_cmd_lba          = admin_queue_init_done ? <span class="number">64&#x27;d0</span> : admin_cmd_lba;</span><br><span class="line"><span class="keyword">assign</span> ssd_cmd_length       = admin_queue_init_done ? <span class="number">16&#x27;d0</span> : admin_cmd_length;</span><br><span class="line"><span class="keyword">assign</span> ssd_cmd_valid        = !admin_queue_init_done &amp;&amp; admin_cmd_valid;</span><br><span class="line"><span class="keyword">assign</span> admin_cmd_ready      = !admin_queue_init_done &amp;&amp; ssd_cmd_ready;</span><br><span class="line"><span class="keyword">assign</span> queue_init_done      = admin_queue_init_done;</span><br></pre></td></tr></table></figure>
+
+<p>这段逻辑的含义很直接：初始化队列没有完成时，Admin 创建队列命令可以进入 <code>SSD_ctl</code>；完成之后，<code>queue_init_done</code> 拉高，同时这一路初始化命令不再继续发，避免后续运行时重复创建队列。</p>
+<h2 id="5-2-PCIe-深度优先枚举与-NVMe-初始化的关系"><a href="#5-2-PCIe-深度优先枚举与-NVMe-初始化的关系" class="headerlink" title="5.2 PCIe 深度优先枚举与 NVMe 初始化的关系"></a>5.2 PCIe 深度优先枚举与 NVMe 初始化的关系</h2><p>PCIe 枚举负责找到设备和 BAR 空间，NVMe 初始化负责配置控制器寄存器。</p>
+<p>当前工程里保留了两类枚举思路：</p>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>定位</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>pcie_us_enum_state.v</code></td>
+<td>已上板验证过的固定目标枚举路径，适合单 SSD Bring-up</td>
+</tr>
+<tr>
+<td><code>pcie_us_enum_dfs_state.v</code></td>
+<td>独立深度优先枚举版本，用于支持 BDF 扫描、Bridge 下探和 NVMe class code 匹配</td>
+</tr>
+</tbody></table>
+<p>DFS 枚举的目标是让 FPGA 更像一个轻量级 Root Complex：从 <code>START_BUS</code> 开始扫描 bus&#x2F;device&#x2F;function，通过配置读写读取 Vendor ID、Header Type 和 Class Code；遇到 PCI Bridge 时配置 secondary bus 与 memory window 并优先下探；遇到 class code 为 <code>24&#39;h010802</code> 的 NVMe endpoint 后，再进行 BAR0 探测、BAR 地址分配和 Command Register 使能。</p>
+<p>详细设计见：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">5A. PCIe 深度优先枚举设计.md</span><br></pre></td></tr></table></figure>
+
+<p>对后续 SSD 控制器而言，枚举阶段的关键结果是：</p>
+<ul>
+<li>链路已经建立，<code>link_up</code> 有效。</li>
+<li>能够通过 RQ&#x2F;RC 对 SSD 配置空间和 BAR 寄存器进行访问。</li>
+<li>已经知道 SSD BAR0 的访问基准，当前工程按 <code>BAR0_BASE_ADDR = 0x1000_0000</code> 使用。</li>
+<li><code>nvme_init_done</code> 表示 NVMe 控制器基础寄存器配置完成。</li>
+</ul>
+<p>需要注意的是，DFS 模块当前是独立版本，<code>pcie_us.v</code> 主路径如果仍然例化 <code>pcie_us_enum_state.v</code>，则当前主路径仍以固定目标枚举为稳定版本。后续若切换成功，<code>pcie_us_enum_dfs_state.v</code> 输出的 <code>ssd_bdf</code>、<code>ssd_bar0_base</code>、<code>ssd_bar0_size</code> 可以进一步替代固定 BDF&#x2F;BAR 参数。</p>
+<h2 id="5-3-Admin-Queue-初始化流程"><a href="#5-3-Admin-Queue-初始化流程" class="headerlink" title="5.3 Admin Queue 初始化流程"></a>5.3 Admin Queue 初始化流程</h2><p><code>pcie_nvme_init_state.v</code> 中的核心状态可以概括为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">IDLE</span><br><span class="line">-&gt; CAP_RD</span><br><span class="line">-&gt; DISABLE_CC_WR</span><br><span class="line">-&gt; CHECK_DISABLE_RDY</span><br><span class="line">-&gt; CFG_AQA_WR</span><br><span class="line">-&gt; CFG_ASQ_WR</span><br><span class="line">-&gt; CFG_ACQ_WR</span><br><span class="line">-&gt; ENABLE_CC</span><br><span class="line">-&gt; CHECK_RDY</span><br><span class="line">-&gt; DONE</span><br></pre></td></tr></table></figure>
+
+<p>这条链路做的事情是：</p>
+<ol>
+<li>读取 NVMe CAP 等寄存器，确认控制器可以继续配置。</li>
+<li>写 CC 寄存器关闭控制器。</li>
+<li>轮询 CSTS.RDY，等待控制器进入非 ready 状态。</li>
+<li>写 AQA，配置 Admin Submission Queue 和 Admin Completion Queue 深度。</li>
+<li>写 ASQ，配置 Admin SQ 地址。</li>
+<li>写 ACQ，配置 Admin CQ 地址。</li>
+<li>写 CC，使能控制器。</li>
+<li>再次轮询 CSTS.RDY，等待控制器 ready。</li>
+<li>输出 <code>nvme_init_done</code>。</li>
+</ol>
+<p>当前默认地址和深度为：</p>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>当前值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>BAR0_BASE_ADDR</code></td>
+<td><code>0x1000_0000</code></td>
+<td>SSD BAR0 基地址</td>
+</tr>
+<tr>
+<td><code>ADMIN_SQ_ADDRESS</code></td>
+<td><code>0x2000_0000</code></td>
+<td>Admin SQ 在 FPGA 地址空间中的窗口</td>
+</tr>
+<tr>
+<td><code>ADMIN_CQ_ADDRESS</code></td>
+<td><code>0x2000_1000</code></td>
+<td>Admin CQ 在 FPGA 地址空间中的窗口</td>
+</tr>
+<tr>
+<td><code>ADMIN_SQ_DEPTH</code></td>
+<td><code>64</code></td>
+<td>Admin SQ 深度</td>
+</tr>
+<tr>
+<td><code>ADMIN_CQ_DEPTH</code></td>
+<td><code>64</code></td>
+<td>Admin CQ 深度</td>
+</tr>
+</tbody></table>
+<p>AQA 写入的是 zero-based 队列深度，也就是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">AQA.ASQS = ADMIN_SQ_DEPTH - 1</span><br><span class="line">AQA.ACQS = ADMIN_CQ_DEPTH - 1</span><br></pre></td></tr></table></figure>
+
+<p>这是 NVMe 里很容易写错的点。寄存器中填的是 <code>depth - 1</code>，不是实际深度。</p>
+<p>从代码上看，<code>pcie_nvme_init_state.v</code> 里把 Admin Queue 深度提前转换成 zero-based 值：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">15</span>:<span class="number">0</span>] ADMIN_SQ_SIZE_M1 = ADMIN_SQ_DEPTH - <span class="number">1</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">15</span>:<span class="number">0</span>] ADMIN_CQ_SIZE_M1 = ADMIN_CQ_DEPTH - <span class="number">1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>写 AQA 时，把 ACQ 和 ASQ 的 zero-based 深度拼到同一个 32-bit 数据中：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">CFG_AQA_WR: <span class="keyword">begin</span></span><br><span class="line">    tlp_length         = <span class="number">10&#x27;d1</span>;</span><br><span class="line">    tlp_fmt_type       = TLP_TYPE_MEM_WR32;</span><br><span class="line">    tlp_first_be       = <span class="number">4&#x27;hF</span>;</span><br><span class="line">    tlp_last_be        = <span class="number">4&#x27;h0</span>;</span><br><span class="line">    tlp_low_mem_adress = BAR0_BASE_ADDR + <span class="number">32&#x27;h24</span>;</span><br><span class="line"></span><br><span class="line">    tx_wr_req_tlp_data_next[<span class="number">31</span>:<span class="number">0</span>] = &#123;</span><br><span class="line">        ADMIN_CQ_SIZE_M1,</span><br><span class="line">        ADMIN_SQ_SIZE_M1</span><br><span class="line">    &#125;;</span><br><span class="line">    tx_wr_req_tlp_strb_next = <span class="number">8&#x27;h01</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这里 <code>BAR0_BASE_ADDR + 0x24</code> 对应 NVMe AQA 寄存器。因为只写 1DW，所以 <code>tlp_length = 1</code>，<code>first_be = 4&#39;hF</code>，<code>last_be = 0</code>。这类 1DW 寄存器写入在当前工程里通过 32-bit Memory Write TLP 完成。</p>
+<p>ASQ 和 ACQ 是 64-bit 地址寄存器，所以写入时使用 64-bit Memory Write，长度为 2DW：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line">CFG_ASQ_WR: <span class="keyword">begin</span></span><br><span class="line">    tlp_length         = <span class="number">10&#x27;d2</span>;</span><br><span class="line">    tlp_fmt_type       = TLP_TYPE_MEM_WR64;</span><br><span class="line">    tlp_first_be       = <span class="number">4&#x27;hF</span>;</span><br><span class="line">    tlp_last_be        = <span class="number">4&#x27;hF</span>;</span><br><span class="line">    tlp_low_mem_adress = BAR0_BASE_ADDR + <span class="number">8&#x27;h28</span>;</span><br><span class="line"></span><br><span class="line">    tx_wr_req_tlp_data_next[<span class="number">63</span>:<span class="number">0</span>] = &#123;<span class="number">32&#x27;d0</span>, ADMIN_SQ_ADDRESS&#125;;</span><br><span class="line">    tx_wr_req_tlp_strb_next       = <span class="number">8&#x27;h03</span>;</span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">CFG_ACQ_WR: <span class="keyword">begin</span></span><br><span class="line">    tlp_length         = <span class="number">10&#x27;d2</span>;</span><br><span class="line">    tlp_fmt_type       = TLP_TYPE_MEM_WR64;</span><br><span class="line">    tlp_first_be       = <span class="number">4&#x27;hF</span>;</span><br><span class="line">    tlp_last_be        = <span class="number">4&#x27;hF</span>;</span><br><span class="line">    tlp_low_mem_adress = BAR0_BASE_ADDR + <span class="number">8&#x27;h30</span>;</span><br><span class="line"></span><br><span class="line">    tx_wr_req_tlp_data_next[<span class="number">63</span>:<span class="number">0</span>] = &#123;<span class="number">32&#x27;d0</span>, ADMIN_CQ_ADDRESS&#125;;</span><br><span class="line">    tx_wr_req_tlp_strb_next       = <span class="number">8&#x27;h03</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这里要注意两个地址概念：</p>
+<ul>
+<li><code>BAR0_BASE_ADDR + 0x28/0x30</code> 是 SSD 控制器寄存器地址。</li>
+<li><code>ADMIN_SQ_ADDRESS / ADMIN_CQ_ADDRESS</code> 是 FPGA 暴露给 SSD 访问的队列内存地址。</li>
+</ul>
+<p>也就是说，FPGA 是把“队列在主机内存中的地址”写到 SSD BAR0 的 ASQ&#x2F;ACQ 寄存器里，之后 SSD 才会根据这些地址通过 CQ 通道来读写 FPGA 侧队列。</p>
+<p>使能控制器时，状态机会写 CC 寄存器，然后轮询 CSTS.RDY：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line">ENABLE_CC: <span class="keyword">begin</span></span><br><span class="line">    tlp_length         = <span class="number">10&#x27;d1</span>;</span><br><span class="line">    tlp_fmt_type       = TLP_TYPE_MEM_WR32;</span><br><span class="line">    tlp_low_mem_adress = BAR0_BASE_ADDR + <span class="number">8&#x27;h14</span>;</span><br><span class="line"></span><br><span class="line">    tx_wr_req_tlp_data_next[<span class="number">31</span>:<span class="number">0</span>] = <span class="number">32&#x27;h0046_0001</span>;</span><br><span class="line">    tx_wr_req_tlp_strb_next       = <span class="number">8&#x27;h01</span>;</span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">CHECK_RDY: <span class="keyword">begin</span></span><br><span class="line">    tlp_length         = <span class="number">10&#x27;d1</span>;</span><br><span class="line">    tlp_fmt_type       = TLP_TYPE_MEM_RD32;</span><br><span class="line">    tlp_low_mem_adress = BAR0_BASE_ADDR + <span class="number">8&#x27;h1C</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p><code>0x14</code> 是 CC，<code>0x1C</code> 是 CSTS。当前状态机在写 CC.EN 之后不断读取 CSTS，直到 <code>CSTS.RDY=1</code>，才认为 NVMe 控制器基础初始化完成。</p>
+<p>状态推进逻辑里也能看到这个关系：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">CHECK_RDY_WAIT: <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (is_valid_cpl) <span class="keyword">begin</span></span><br><span class="line">        <span class="keyword">if</span> (cpl_status == <span class="number">3&#x27;b010</span>) <span class="keyword">begin</span></span><br><span class="line">            init_state_next = RETRY;</span><br><span class="line">            retry_last_init_state_next = CHECK_RDY;</span><br><span class="line">        <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (cpl_status == <span class="number">3&#x27;b000</span>) <span class="keyword">begin</span></span><br><span class="line">            <span class="keyword">if</span> (rx_cpl_tlp_data[<span class="number">0</span>])</span><br><span class="line">                init_state_next = DONE;</span><br><span class="line">            <span class="keyword">else</span></span><br><span class="line">                init_state_next = CHECK_RDY;</span><br><span class="line">        <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">            init_state_next = ERROR;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这里 <code>rx_cpl_tlp_data[0]</code> 就是 CSTS.RDY。只有读寄存器返回 successful completion，并且 RDY bit 为 1，才进入 <code>DONE</code>。</p>
+<h2 id="5-4-IO-Queue-创建流程"><a href="#5-4-IO-Queue-创建流程" class="headerlink" title="5.4 IO Queue 创建流程"></a>5.4 IO Queue 创建流程</h2><p>Admin Queue 建好之后，<code>ADMIN_queue_init.v</code> 开始通过 Admin Command 创建 IO Queue。</p>
+<p>当前流程是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">等待 init_done</span><br><span class="line">-&gt; 延时一段时间</span><br><span class="line">-&gt; 发送 Create IO Completion Queue</span><br><span class="line">-&gt; 等待 io_cq_init_done</span><br><span class="line">-&gt; 循环发送 Create IO Submission Queue，QID = 1..16</span><br><span class="line">-&gt; 每条 IOSQ 创建后等待 nvme_queue_done</span><br><span class="line">-&gt; 全部完成后 admin_queue_init_done = 1</span><br></pre></td></tr></table></figure>
+
+<p>当前 IO Queue 规划为：</p>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>当前值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>IO_QUEUE_COUNT</code></td>
+<td><code>16</code></td>
+<td>最多 16 路 IO SQ</td>
+</tr>
+<tr>
+<td><code>IO_CQ_ADDRESS</code></td>
+<td><code>0x2001_2000</code></td>
+<td>IOCQ 基地址</td>
+</tr>
+<tr>
+<td><code>IO_CQ_DEPTH</code></td>
+<td><code>1024</code></td>
+<td>IO Completion Queue 总深度</td>
+</tr>
+<tr>
+<td><code>IO_SQ_ADDRESS</code></td>
+<td><code>0x2000_2000</code></td>
+<td>IOSQ 基地址</td>
+</tr>
+<tr>
+<td><code>RANGE_SIZE</code></td>
+<td><code>0x1000</code></td>
+<td>每路 IOSQ 地址窗口 4KB</td>
+</tr>
+<tr>
+<td><code>IO_SQ_DEPTH</code></td>
+<td><code>64</code></td>
+<td>每路 IOSQ 深度</td>
+</tr>
+</tbody></table>
+<p>当前设计里，IOCQ 只创建 1 个，CQID 为 1。16 路 IOSQ 都绑定到这个 IOCQ：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">IOSQ QID = 1..16</span><br><span class="line">CQID     = 1</span><br></pre></td></tr></table></figure>
+
+<p>这意味着 completion 统一回到 IOCQ，再由队列模块和 command 模块根据 CQE 中的 CID&#x2F;SQID 做匹配。</p>
+<p><code>ADMIN_queue_init.v</code> 的状态机比较短，核心就是先创建 IOCQ，再循环创建 IOSQ：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">2</span>:<span class="number">0</span>] IDLE       = <span class="number">3&#x27;d0</span>,</span><br><span class="line">                 START      = <span class="number">3&#x27;d1</span>,</span><br><span class="line">                 IO_CQ      = <span class="number">3&#x27;d2</span>,</span><br><span class="line">                 IO_CQ_WAIT = <span class="number">3&#x27;d3</span>,</span><br><span class="line">                 IO_SQ      = <span class="number">3&#x27;d4</span>,</span><br><span class="line">                 IO_SQ_WAIT = <span class="number">3&#x27;d5</span>,</span><br><span class="line">                 DONE       = <span class="number">3&#x27;d6</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">15</span>:<span class="number">0</span>] CQ_SIZE_M1 = CQ_DEPTH - <span class="number">1</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">15</span>:<span class="number">0</span>] SQ_SIZE_M1 = SQ_DEPTH - <span class="number">1</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">15</span>:<span class="number">0</span>] IO_QUEUE_COUNT_LIMIT = IO_QUEUE_COUNT;</span><br></pre></td></tr></table></figure>
+
+<p>Create IO Completion Queue 的命令字段在 <code>IO_CQ</code> 状态中生成：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">IO_CQ: <span class="keyword">begin</span></span><br><span class="line">    i_valid_next        = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    i_command_type_next = <span class="number">2&#x27;d1</span>;</span><br><span class="line">    i_opcode_next       = <span class="number">8&#x27;h05</span>;              <span class="comment">// Create IO CQ</span></span><br><span class="line">    i_prp1_next         = &#123;<span class="number">32&#x27;d0</span>, IO_CQ_ADDRESS&#125;;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// CDW10: [31:16] QSIZE, [15:0] QID</span></span><br><span class="line">    i_lba_next[<span class="number">31</span>:<span class="number">0</span>]    = &#123;CQ_SIZE_M1, <span class="number">16&#x27;d1</span>&#125;;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// CDW11: PC=1</span></span><br><span class="line">    i_lba_next[<span class="number">63</span>:<span class="number">32</span>]   = <span class="number">32&#x27;h0000_0001</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (i_valid_reg &amp;&amp; i_ready)</span><br><span class="line">        i_valid_next = <span class="number">1&#x27;b0</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这里使用了一个工程上的复用：<code>ADMIN_queue_init</code> 输出的 <code>i_lba[31:0]</code> 最终会被 <code>command_construct</code> 放到 Admin Command 的 CDW10，<code>i_lba[63:32]</code> 会被放到 CDW11。对于 Create IO CQ：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">CDW10[31:16] = QSIZE = CQ_DEPTH - 1</span><br><span class="line">CDW10[15:0]  = QID   = 1</span><br><span class="line">CDW11[0]     = PC    = 1</span><br><span class="line">PRP1         = IOCQ 地址</span><br></pre></td></tr></table></figure>
+
+<p>Create IO Submission Queue 的命令字段在 <code>IO_SQ</code> 状态中生成：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">IO_SQ: <span class="keyword">begin</span></span><br><span class="line">    i_valid_next        = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    i_command_type_next = <span class="number">2&#x27;d1</span>;</span><br><span class="line">    i_opcode_next       = <span class="number">8&#x27;h01</span>;              <span class="comment">// Create IO SQ</span></span><br><span class="line">    i_prp1_next         = &#123;<span class="number">32&#x27;d0</span>, IO_SQ_ADDRESS&#125;</span><br><span class="line">                        + (&#123;<span class="number">48&#x27;d0</span>, (io_qid_reg - <span class="number">16&#x27;d1</span>)&#125; * &#123;<span class="number">32&#x27;d0</span>, IO_SQ_STRIDE&#125;);</span><br><span class="line"></span><br><span class="line">    <span class="comment">// CDW10: [31:16] QSIZE, [15:0] QID</span></span><br><span class="line">    i_lba_next[<span class="number">31</span>:<span class="number">0</span>]    = &#123;SQ_SIZE_M1, io_qid_reg&#125;;</span><br><span class="line"></span><br><span class="line">    <span class="comment">// CDW11: [31:16] CQID=1, [0] PC=1</span></span><br><span class="line">    i_lba_next[<span class="number">63</span>:<span class="number">32</span>]   = &#123;<span class="number">16&#x27;d1</span>, <span class="number">16&#x27;h0001</span>&#125;;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (i_valid_reg &amp;&amp; i_ready)</span><br><span class="line">        i_valid_next = <span class="number">1&#x27;b0</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这段逻辑把 16 路 IOSQ 映射到连续 4KB window：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">QID=1  -&gt; IO_SQ_ADDRESS + 0 * IO_SQ_STRIDE</span><br><span class="line">QID=2  -&gt; IO_SQ_ADDRESS + 1 * IO_SQ_STRIDE</span><br><span class="line">...</span><br><span class="line">QID=16 -&gt; IO_SQ_ADDRESS + 15 * IO_SQ_STRIDE</span><br></pre></td></tr></table></figure>
+
+<p>所有 IOSQ 的 <code>CQID</code> 都填 1，也就是统一绑定到一个 IOCQ。这样做的好处是 FPGA 内部只需要维护一个 IO Completion Queue 入口，再通过 CQE 里的 <code>SQID/CID</code> 回到对应命令。</p>
+<p>等待每条 Admin 命令完成的逻辑也很关键：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">IO_CQ_WAIT: <span class="keyword">begin</span></span><br><span class="line">    i_valid_next = <span class="number">1&#x27;b0</span>;</span><br><span class="line">    <span class="keyword">if</span> (io_cq_init_done)</span><br><span class="line">        io_qid_next = <span class="number">16&#x27;d1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">IO_SQ_WAIT: <span class="keyword">begin</span></span><br><span class="line">    i_valid_next = <span class="number">1&#x27;b0</span>;</span><br><span class="line">    <span class="keyword">if</span> (nvme_queue_done &amp;&amp; (io_qid_reg &lt; IO_QUEUE_COUNT_LIMIT))</span><br><span class="line">        io_qid_next = io_qid_reg + <span class="number">16&#x27;d1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这里不是发完命令就直接进入下一条，而是等 <code>io_cq_init_done</code> 或 <code>nvme_queue_done</code>。这两个 done 来自 Admin CQE 的真实 completion 匹配，因此可以避免“上一条队列还没创建成功就发下一条”的问题。</p>
+<p><code>command_construct.v</code> 中对 Admin Create IO CQ&#x2F;SQ 的处理也能看出这个字段复用关系：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">case</span> (command_type_reg)</span><br><span class="line">    CMD_TYPE_ADMIN: <span class="keyword">begin</span></span><br><span class="line">        dw1 = <span class="number">32&#x27;d0</span>;</span><br><span class="line">        <span class="keyword">case</span> (i_opcode)</span><br><span class="line">            ADMIN_CREATE_IO_CQ,</span><br><span class="line">            ADMIN_CREATE_IO_SQ: <span class="keyword">begin</span></span><br><span class="line">                cmd_legal = <span class="number">1&#x27;b1</span>;</span><br><span class="line">                dw10 = i_lba[<span class="number">31</span>:<span class="number">0</span>];</span><br><span class="line">                dw11 = i_lba[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line">            <span class="keyword">end</span></span><br><span class="line">        <span class="keyword">endcase</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">endcase</span></span><br></pre></td></tr></table></figure>
+
+<p>因此，<code>ADMIN_queue_init</code> 不直接拼完整 64B SQE，而是输出命令参数；真正的 NVMe SQE 拼接仍然集中在 <code>command_construct</code>，这样 Admin 初始化和后续 IO 命令可以复用同一套 CID &#x2F; record &#x2F; queue 路径。</p>
+<h2 id="5-5-done-信号的职责"><a href="#5-5-done-信号的职责" class="headerlink" title="5.5 done 信号的职责"></a>5.5 done 信号的职责</h2><p>当前工程里很多 done 信号不是简单的“流程结束显示灯”，而是用于保护状态机推进。</p>
+<p>关键 done 可以这样理解：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>nvme_init_done</code></td>
+<td>NVMe 控制器寄存器配置完成，Admin Queue 可用</td>
+</tr>
+<tr>
+<td><code>admin_cq_done</code> &#x2F; <code>admin_cq_done_pulse</code></td>
+<td>Create IO Completion Queue 完成</td>
+</tr>
+<tr>
+<td><code>nvme_queue_done</code> &#x2F; <code>nvme_queue_done_pulse</code></td>
+<td>Create IO Submission Queue 完成</td>
+</tr>
+<tr>
+<td><code>admin_queue_init_done</code></td>
+<td>16 路 IO Queue 创建流程完成</td>
+</tr>
+<tr>
+<td><code>queue_init_done</code></td>
+<td>上层可认为队列初始化完成</td>
+</tr>
+</tbody></table>
+<p>这里的 done 大多来自 command completion 匹配，而不是状态机自己猜测命令完成。也就是说，Admin 命令真正收到 CQE 并匹配成功后，才会拉高对应 done。</p>
+<p><code>command_ctl.v</code> 里 done pulse 的来源是 <code>command_record</code> 的完成匹配结果：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> admin_cq_done_pulse =</span><br><span class="line">    record_done_valid &amp;&amp; record_done_status_ok &amp;&amp;</span><br><span class="line">    record_done_queue_id == QUEUE_ID_ADMIN &amp;&amp;</span><br><span class="line">    record_done_opcode == ADMIN_CREATE_IO_CQ;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> nvme_queue_done_pulse =</span><br><span class="line">    record_done_valid &amp;&amp; record_done_status_ok &amp;&amp;</span><br><span class="line">    record_done_queue_id == QUEUE_ID_ADMIN &amp;&amp;</span><br><span class="line">    record_done_opcode == ADMIN_CREATE_IO_SQ;</span><br></pre></td></tr></table></figure>
+
+<p>这说明 <code>ADMIN_queue_init</code> 等待的不是“命令已经送入 ASQ”，而是“SSD 已经执行 Admin 命令并写回 ACQ，command_record 已经按 CID 匹配成功”。</p>
+<p>电平型 done 则会在成功完成后保持：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (record_done_valid &amp;&amp; record_done_status_ok) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (record_done_queue_id == QUEUE_ID_ADMIN &amp;&amp;</span><br><span class="line">        record_done_opcode == ADMIN_CREATE_IO_CQ)</span><br><span class="line">        admin_cq_done_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (record_done_queue_id == QUEUE_ID_ADMIN &amp;&amp;</span><br><span class="line">        record_done_opcode == ADMIN_CREATE_IO_SQ)</span><br><span class="line">        nvme_queue_done_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>当前 <code>ADMIN_queue_init</code> 使用的是 pulse 输入：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.io_cq_init_done</span> (admin_cq_done_pulse),</span><br><span class="line"><span class="variable">.nvme_queue_done</span> (nvme_queue_done_pulse),</span><br></pre></td></tr></table></figure>
+
+<p>这样每一条 Create IO SQ 完成时都会产生一次 <code>nvme_queue_done_pulse</code>，状态机才能推进到下一路 QID。如果只看电平型 <code>nvme_queue_done</code>，第一条 IOSQ 完成后它会保持为 1，后面循环就可能失去“一条命令对应一次完成”的节奏。</p>
+<h2 id="5-6-地址一致性检查"><a href="#5-6-地址一致性检查" class="headerlink" title="5.6 地址一致性检查"></a>5.6 地址一致性检查</h2><p>初始化模块写给 SSD 的队列地址，必须和 <code>CQ_route</code> 里对 SSD 访问 FPGA 地址的解码保持一致。否则 SSD 可能已经按照 ASQ&#x2F;IOSQ 地址发起 Memory Read，但 FPGA 侧 route 没有命中正确模块。</p>
+<p><code>CQ_route.v</code> 里对队列窗口的命中关系可以简化成下面这样：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">hit_admin_sq_next =</span><br><span class="line">    hit_low_addr_space &amp;&amp;</span><br><span class="line">    (tlp_addr_low &gt;= ADMIN_SQ_ADDRESS) &amp;&amp;</span><br><span class="line">    (tlp_addr_low &lt;  ADMIN_SQ_ADDRESS + RANGE_SIZE) &amp;&amp;</span><br><span class="line">    is_mem_rd;</span><br><span class="line"></span><br><span class="line">hit_admin_cq_next =</span><br><span class="line">    hit_low_addr_space &amp;&amp;</span><br><span class="line">    (tlp_addr_low &gt;= ADMIN_CQ_ADDRESS) &amp;&amp;</span><br><span class="line">    (tlp_addr_low &lt;  ADMIN_CQ_ADDRESS + RANGE_SIZE) &amp;&amp;</span><br><span class="line">    is_mem_wr;</span><br><span class="line"></span><br><span class="line">hit_io_sq_next =</span><br><span class="line">    hit_low_addr_space &amp;&amp;</span><br><span class="line">    (tlp_addr_low &gt;= IO_SQ_ADDRESS) &amp;&amp;</span><br><span class="line">    (tlp_addr_low &lt;  IO_SQ_ADDRESS + IO_SQ_ROUTE_SIZE) &amp;&amp;</span><br><span class="line">    is_mem_rd;</span><br><span class="line"></span><br><span class="line">hit_io_cq_next =</span><br><span class="line">    hit_low_addr_space &amp;&amp;</span><br><span class="line">    (tlp_addr_low &gt;= IO_CQ_ADDRESS) &amp;&amp;</span><br><span class="line">    (tlp_addr_low &lt;  IO_CQ_ADDRESS + IO_CQ_RANGE_SIZE) &amp;&amp;</span><br><span class="line">    is_mem_wr;</span><br></pre></td></tr></table></figure>
+
+<p>这里的方向也要分清：</p>
+<table>
+<thead>
+<tr>
+<th>SSD 行为</th>
+<th>TLP 类型</th>
+<th>应命中</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>读取 Admin SQE</td>
+<td>MemRd</td>
+<td><code>hit_admin_sq</code></td>
+</tr>
+<tr>
+<td>写入 Admin CQE</td>
+<td>MemWr</td>
+<td><code>hit_admin_cq</code></td>
+</tr>
+<tr>
+<td>读取 IO SQE</td>
+<td>MemRd</td>
+<td><code>hit_io_sq</code></td>
+</tr>
+<tr>
+<td>写入 IO CQE</td>
+<td>MemWr</td>
+<td><code>hit_io_cq</code></td>
+</tr>
+</tbody></table>
+<p>所以初始化里写入的 ASQ&#x2F;ACQ&#x2F;IOSQ&#x2F;IOCQ 地址，不只是软件概念，它们会直接决定后续 SSD 在 CQ 通道上访问 FPGA 时命中哪一路逻辑。</p>
+<h2 id="5-7-上板观测点"><a href="#5-7-上板观测点" class="headerlink" title="5.7 上板观测点"></a>5.7 上板观测点</h2><p>初始化阶段可以按下面顺序抓信号：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>关键状态</th>
+<th>重点信号</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PCIe 枚举</td>
+<td><code>pcie_enum_done</code></td>
+<td><code>debug_pcie_enum_state</code>、RQ&#x2F;RC completion</td>
+</tr>
+<tr>
+<td>NVMe 基础初始化</td>
+<td><code>nvme_init_done</code></td>
+<td><code>debug_nvme_init_state</code>、CAP&#x2F;CC&#x2F;CSTS 读写</td>
+</tr>
+<tr>
+<td>Create IOCQ</td>
+<td><code>admin_cq_done_pulse</code></td>
+<td><code>debug_admin_cmd_opcode=8&#39;h05</code>、ASQ read、ACQ write</td>
+</tr>
+<tr>
+<td>Create IOSQ</td>
+<td><code>nvme_queue_done_pulse</code></td>
+<td><code>debug_admin_cmd_opcode=8&#39;h01</code>、QID 递增、ACQ write</td>
+</tr>
+<tr>
+<td>队列初始化完成</td>
+<td><code>queue_init_done</code></td>
+<td><code>debug_admin_queue_init_state=DONE</code></td>
+</tr>
+</tbody></table>
+<p>如果 <code>init_done</code> 已经为 1，但 <code>queue_init_done</code> 不起来，优先看：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">admin_cmd_valid / admin_cmd_ready 是否握手</span><br><span class="line">admin_cmd_opcode 是否先出现 8&#x27;h05 再出现 8&#x27;h01</span><br><span class="line">SSD 是否通过 CQ 读取 ASQ</span><br><span class="line">SSD 是否通过 CQ 写回 ACQ</span><br><span class="line">admin_cq_done_pulse / nvme_queue_done_pulse 是否出现</span><br><span class="line">debug_admin_queue_init_state 卡在哪个状态</span><br></pre></td></tr></table></figure>
+
+<p>如果状态卡在 <code>IO_SQ_WAIT</code>，通常说明某一路 Create IO SQ 没有收到成功 completion。此时应继续看 ACQ CQE、CID 匹配、SQID&#x2F;status，以及 command_record 是否输出 <code>record_done_valid</code>。</p>
+<h2 id="5-8-章节总结"><a href="#5-8-章节总结" class="headerlink" title="5.8 章节总结"></a>5.8 章节总结</h2><p>这一版初始化可以作为当前工程的固定实现：</p>
+<ul>
+<li>已支持 Admin Queue 建立。</li>
+<li>已支持创建 1 个 IOCQ 和 16 个 IOSQ。</li>
+<li>IOSQ 是硬件固定存在，后续通过 enable&#x2F;disable 控制实际使用，而不是运行时真正增删硬件实例。</li>
+<li><code>ADMIN_queue_init</code> 当前创建的是 1 个 IOCQ，16 个 IOSQ 共享该 IOCQ。</li>
+<li>队列地址、CQ route 地址、初始化命令中的 PRP 地址必须保持一致，否则 SSD 会读写错误窗口。</li>
+</ul>
+<p>总结：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">通过硬件状态机完成 NVMe Controller 初始化，并基于 Admin Queue 自动创建 1 个 IOCQ 和 16 路 IOSQ，为后续多队列 IO 调度提供队列基础。</span><br></pre></td></tr></table></figure>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-05-init-queue/" data-id="cmpf3dfkt0007aci78ssuc0wj" data-title="FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+
+  
+    <article id="post-fpga-nvme-host-04-pcie-tlp-flow" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T16:20:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="p-name article-title" href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/">FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>本章重点解释 RQ、RC、CQ、CC 在当前工程里的方向和用途。这里的“方向”要从 FPGA 用户逻辑视角理解。</p>
+</blockquote>
+<p><img src="/images/nvme-host/4-pcie-tlp-channels.svg" alt="图 4-1 PCIe RQ&#x2F;RC&#x2F;CQ&#x2F;CC 四通道方向图"></p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#4-1-%E5%9B%9B%E9%80%9A%E9%81%93%E4%B8%80%E5%8F%A5%E8%AF%9D%E5%8C%BA%E5%88%86">4.1 四通道一句话区分</a></li>
+<li><a href="#4-2-%E5%9B%9B%E9%80%9A%E9%81%93%E5%92%8C-TLP-%E7%B1%BB%E5%9E%8B%E7%9A%84%E5%85%B3%E7%B3%BB">4.2 四通道和 TLP 类型的关系</a></li>
+<li><a href="#4-3-RQRequester-Request">4.3 RQ：Requester Request</a></li>
+<li><a href="#4-4-RCRequester-Completion">4.4 RC：Requester Completion</a></li>
+<li><a href="#4-5-CQCompleter-Request">4.5 CQ：Completer Request</a></li>
+<li><a href="#4-6-CCCompleter-Completion">4.6 CC：Completer Completion</a></li>
+<li><a href="#4-7-%E5%9B%9B%E9%80%9A%E9%81%93%E5%9C%A8%E5%B7%A5%E7%A8%8B%E4%B8%AD%E7%9A%84%E6%B1%87%E8%81%9A%E5%92%8C%E5%88%86%E5%8F%91">4.7 四通道在工程中的汇聚和分发</a></li>
+<li><a href="#4-8-16KB-Write-%E4%B8%AD%E5%9B%9B%E9%80%9A%E9%81%93%E7%9A%84%E5%AE%9E%E9%99%85%E4%BD%BF%E7%94%A8">4.8 16KB Write 中四通道的实际使用</a></li>
+<li><a href="#4-9-16KB-Read-%E4%B8%AD%E5%9B%9B%E9%80%9A%E9%81%93%E7%9A%84%E5%AE%9E%E9%99%85%E4%BD%BF%E7%94%A8">4.9 16KB Read 中四通道的实际使用</a></li>
+<li><a href="#4-10-ILA-%E8%A7%82%E6%B5%8B%E5%92%8C%E8%B7%AF%E5%BE%84%E5%88%A4%E6%96%AD">4.10 ILA 观测和路径判断</a></li>
+<li><a href="#4-11-readyvalid-%E5%92%8C%E6%B5%81%E6%8E%A7%E5%85%B3%E7%B3%BB">4.11 ready&#x2F;valid 和流控关系</a></li>
+<li><a href="#4-12-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">4.12 章节总结</a></li>
+</ul>
+<h2 id="4-1-四通道一句话区分"><a href="#4-1-四通道一句话区分" class="headerlink" title="4.1 四通道一句话区分"></a>4.1 四通道一句话区分</h2><figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">RQ：FPGA 作为 requester，主动向 SSD 发请求。</span><br><span class="line">RC：SSD 对 FPGA requester 请求返回 completion。</span><br><span class="line">CQ：SSD 作为 requester，主动访问 FPGA 地址空间。</span><br><span class="line">CC：FPGA 作为 completer，响应 SSD 的 non-posted request。</span><br></pre></td></tr></table></figure>
+
+<p>更简洁地说：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">RQ/RC：FPGA 主动访问 SSD 时使用。</span><br><span class="line">CQ/CC：SSD 主动访问 FPGA 时使用。</span><br></pre></td></tr></table></figure>
+
+<p>这个项目里最容易混淆的是 CQ 和 CC。CQ 不是 completion queue，CC 也不是 command completion。它们是 Xilinx PCIe IP 的 AXI-Stream 接口名称：</p>
+<ul>
+<li><code>m_axis_cq</code> &#x2F; CQ：Completer Request。</li>
+<li><code>s_axis_cc</code> &#x2F; CC：Completer Completion。</li>
+</ul>
+<p>NVMe 里的 CQ 是 Completion Queue，和 PCIe IP 的 CQ 不是同一个概念。</p>
+<h2 id="4-2-四通道和-TLP-类型的关系"><a href="#4-2-四通道和-TLP-类型的关系" class="headerlink" title="4.2 四通道和 TLP 类型的关系"></a>4.2 四通道和 TLP 类型的关系</h2><p>从 PCIe Transaction Layer 看，真正在线路上传输的是 TLP。RQ&#x2F;RC&#x2F;CQ&#x2F;CC 是 Xilinx PCIe IP 在用户逻辑侧划出来的四条 AXI-Stream 通道。</p>
+<p>当前项目中常见 TLP 类型可以这样归类：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>TLP 类型</th>
+<th>出现通道</th>
+<th>是否需要 completion</th>
+<th>当前用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>配置空间读取</td>
+<td>CfgRd</td>
+<td>RQ</td>
+<td>需要 RC</td>
+<td>枚举、读取 Vendor ID、Class Code、BAR</td>
+</tr>
+<tr>
+<td>配置空间写入</td>
+<td>CfgWr</td>
+<td>RQ</td>
+<td>一般不返回数据</td>
+<td>BAR 分配、Command Register 使能</td>
+</tr>
+<tr>
+<td>FPGA 读 SSD BAR</td>
+<td>MemRd</td>
+<td>RQ</td>
+<td>需要 RC</td>
+<td>读取 NVMe CAP、CSTS 等寄存器</td>
+</tr>
+<tr>
+<td>FPGA 写 SSD BAR</td>
+<td>MemWr</td>
+<td>RQ</td>
+<td>posted，不需要 RC</td>
+<td>写 CC、AQA、ASQ、ACQ、doorbell</td>
+</tr>
+<tr>
+<td>SSD 读 FPGA 队列&#x2F;PRP&#x2F;数据</td>
+<td>MemRd</td>
+<td>CQ</td>
+<td>需要 CC</td>
+<td>读 SQE、PRP List、Write payload</td>
+</tr>
+<tr>
+<td>SSD 写 FPGA completion&#x2F;data</td>
+<td>MemWr</td>
+<td>CQ</td>
+<td>posted，不需要 CC</td>
+<td>写 ACQ&#x2F;IOCQ CQE，Read payload 写回</td>
+</tr>
+<tr>
+<td>FPGA 响应 SSD MemRd</td>
+<td>CplD</td>
+<td>CC</td>
+<td>completion data</td>
+<td>返回 SQE、PRP entry、memory data</td>
+</tr>
+</tbody></table>
+<p>这里最关键的是 posted 和 non-posted 的区别：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">MemWr 通常是 posted request，发出去之后不会等 completion。</span><br><span class="line">MemRd / CfgRd 是 non-posted request，后续必须有 completion 返回。</span><br></pre></td></tr></table></figure>
+
+<p>因此，写 doorbell 后看不到 RC completion 是正常的；SSD 通过 CQ 写 IOCQ 后也不需要 FPGA 通过 CC 回应。只有 SSD 发起 MemRd 时，FPGA 才需要在 CC 上返回 CplD。</p>
+<h2 id="4-3-RQ：Requester-Request"><a href="#4-3-RQ：Requester-Request" class="headerlink" title="4.3 RQ：Requester Request"></a>4.3 RQ：Requester Request</h2><p>RQ 是 FPGA 主动向 SSD 发出的 PCIe request。</p>
+<p>在当前工程中，RQ 主要承载：</p>
+<ul>
+<li>PCIe 枚举和 NVMe 初始化阶段的配置读写。</li>
+<li>写 SSD BAR 中的 doorbell 寄存器。</li>
+<li>队列模块发出的 ASQ&#x2F;ACQ&#x2F;IOSQ&#x2F;IOCQ 相关 outbound request。</li>
+</ul>
+<p>代码路径可以概括为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">nvme_queue_ctl</span><br><span class="line">-&gt; ASQ/ACQ/IOSQ/IOCQ tx_rd_req_tlp / tx_wr_req_tlp</span><br><span class="line">-&gt; SSD_pcie_us</span><br><span class="line">-&gt; RQ_round_robin</span><br><span class="line">-&gt; pcie_us</span><br><span class="line">-&gt; pcie_dma_if</span><br><span class="line">-&gt; Xilinx PCIe IP s_axis_rq</span><br><span class="line">-&gt; SSD</span><br></pre></td></tr></table></figure>
+
+<p>典型例子是 SQ doorbell：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">FPGA 写入 SQE 到本地 queue buffer</span><br><span class="line">-&gt; RQ 发送 Memory Write TLP 到 SSD BAR0 doorbell</span><br><span class="line">-&gt; SSD 知道 Submission Queue tail 已更新</span><br></pre></td></tr></table></figure>
+
+<p>RQ 在初始化阶段和运行时的作用不完全一样：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>RQ 发出的主要请求</th>
+<th>后续观察点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PCIe 枚举</td>
+<td>CfgRd &#x2F; CfgWr</td>
+<td>RC 返回配置 completion，枚举状态机推进</td>
+</tr>
+<tr>
+<td>NVMe 基础初始化</td>
+<td>MemRd &#x2F; MemWr 到 SSD BAR0</td>
+<td>CAP&#x2F;CSTS 读取需要 RC，寄存器写入通常不等返回</td>
+</tr>
+<tr>
+<td>Queue 初始化</td>
+<td>SQ doorbell &#x2F; Admin command 相关写入</td>
+<td>SSD 后续通过 CQ 读取 ASQ</td>
+</tr>
+<tr>
+<td>IO 运行时</td>
+<td>IOSQ doorbell、CQ head doorbell</td>
+<td>SSD 后续通过 CQ 读取 IOSQ 或继续写 CQE</td>
+</tr>
+</tbody></table>
+<p>所以 RQ 本身不是“大数据通道”。对当前 16KB Write&#x2F;Read 来说，RQ 主要承担通知和少量寄存器访问，真正的 16KB payload 主要走 CQ&#x2F;CC 或 CQ MemWr。</p>
+<h2 id="4-4-RC：Requester-Completion"><a href="#4-4-RC：Requester-Completion" class="headerlink" title="4.4 RC：Requester Completion"></a>4.4 RC：Requester Completion</h2><p>RC 是 FPGA 主动请求之后，对端返回的 completion。</p>
+<p>在 PCIe 枚举、配置空间读取、读取 SSD BAR 寄存器时，RC 非常重要。比如 FPGA 读 NVMe CAP、VS、CSTS 等寄存器，SSD 会通过 completion 返回数据。</p>
+<p>当前工程中要注意一点：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ssd_top 中 pcie2nvme_rx_cpl_tlp_ready 接为 1&#x27;b0。</span><br></pre></td></tr></table></figure>
+
+<p>这说明 <code>SSD_ctl</code> 的主数据路径当前不消费 RC completion。运行时的 NVMe IO 数据流主要是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">RQ 写 doorbell</span><br><span class="line">SSD 通过 CQ 读 SQE/PRP/data 或写 CQE</span><br><span class="line">FPGA 通过 CC 返回 CplD</span><br></pre></td></tr></table></figure>
+
+<p>而 PCIe 枚举和 NVMe 初始化所需的 RC 路径主要在 <code>pcie_us</code> 内部处理。</p>
+<p>这会带来一个工程判断：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">如果卡在枚举或 NVMe 控制器寄存器初始化，优先看 RQ/RC。</span><br><span class="line">如果卡在 IO 命令发出之后，优先看 CQ/CC、queue、PRP、memory。</span><br></pre></td></tr></table></figure>
+
+<p>例如 <code>init_done</code> 不起来，可能是配置读写、CAP&#x2F;CSTS 读取或状态机等待 RC completion 出问题；而 <code>io_wr_done</code> 不回来，更可能是 SSD 没读到 IOSQ、PRP list、data，或者 IOCQ completion 没被正确接收和匹配。</p>
+<h2 id="4-5-CQ：Completer-Request"><a href="#4-5-CQ：Completer-Request" class="headerlink" title="4.5 CQ：Completer Request"></a>4.5 CQ：Completer Request</h2><p>CQ 是 SSD 主动访问 FPGA 地址空间时，PCIe IP 交给用户逻辑的 request 通道。</p>
+<p>在当前项目中，SSD 通过 CQ 发来的请求包括：</p>
+<ul>
+<li>读取 Admin SQE。</li>
+<li>写入 Admin CQE。</li>
+<li>读取 IO SQE。</li>
+<li>写入 IO CQE。</li>
+<li>读取 PRP List。</li>
+<li>读取或写入 FPGA memory window。</li>
+</ul>
+<p>代码路径可以概括为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">SSD</span><br><span class="line">-&gt; Xilinx PCIe IP m_axis_cq</span><br><span class="line">-&gt; pcie_dma_if / pcie_us_if_cq</span><br><span class="line">-&gt; rx_req_tlp_*</span><br><span class="line">-&gt; SSD_pcie_us</span><br><span class="line">-&gt; CQ_route</span><br><span class="line">-&gt; ASQ / ACQ / IOSQ / IOCQ / MEM_RD / MEM_WR / PRP</span><br></pre></td></tr></table></figure>
+
+<p><code>CQ_route</code> 按地址和 TLP 类型进行分发。当前主要窗口如下：</p>
+<table>
+<thead>
+<tr>
+<th>命中目标</th>
+<th>TLP 类型</th>
+<th>地址窗口</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>ASQ</td>
+<td>MemRd</td>
+<td><code>ADMIN_SQ_ADDRESS</code></td>
+</tr>
+<tr>
+<td>ACQ</td>
+<td>MemWr</td>
+<td><code>ADMIN_CQ_ADDRESS</code></td>
+</tr>
+<tr>
+<td>IOSQ</td>
+<td>MemRd</td>
+<td><code>IO_SQ_ADDRESS</code></td>
+</tr>
+<tr>
+<td>IOCQ</td>
+<td>MemWr</td>
+<td><code>IO_CQ_ADDRESS</code></td>
+</tr>
+<tr>
+<td>MEM_RD</td>
+<td>MemRd</td>
+<td><code>cfg_memory_base_addr</code> 范围</td>
+</tr>
+<tr>
+<td>MEM_WR</td>
+<td>MemWr</td>
+<td><code>cfg_memory_base_addr</code> 范围</td>
+</tr>
+<tr>
+<td>PRP</td>
+<td>MemRd</td>
+<td><code>cfg_prp_base_addr</code> 范围</td>
+</tr>
+</tbody></table>
+<p>这里有一个调试时很重要的细节：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">CQ_route 下游多个端口共用 r_hdr/r_data。</span><br><span class="line">所以看到某个 debug hdr 变成 PRP 地址，不等于它一定 route 到 MEM_RD 或 PRP。</span><br><span class="line">真正判断要看对应 valid：MEM_RD_rx_req_tlp_valid、PRP_rx_req_tlp_valid 等。</span><br></pre></td></tr></table></figure>
+
+<p>CQ 是当前运行时最重要的入口。SSD 执行命令时，会把 FPGA 当成 host memory 来访问，所以 CQ 上出现 MemRd&#x2F;MemWr 是正常现象。</p>
+<p>对 CQ route 来说，判断一个请求最终去了哪里，至少要同时看三类信息：</p>
+<table>
+<thead>
+<tr>
+<th>信息</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>rx_req_tlp_valid/sop/eop</code></td>
+<td>说明 PCIe IP 真的收到一笔 request</td>
+</tr>
+<tr>
+<td><code>rx_req_tlp_hdr</code> 中的地址和类型</td>
+<td>判断是 MemRd 还是 MemWr，以及访问哪个地址窗口</td>
+</tr>
+<tr>
+<td>route 后的各路 <code>*_rx_req_tlp_valid</code></td>
+<td>判断请求真正分发到 ASQ&#x2F;ACQ&#x2F;IOSQ&#x2F;IOCQ&#x2F;MEM&#x2F;PRP 哪一路</td>
+</tr>
+</tbody></table>
+<p>例如同样是访问 <code>0x3000_xxxx</code> 附近地址：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">MemRd -&gt; 应命中 MEM_RD，后续由 memory 模块通过 CC 返回 CplD。</span><br><span class="line">MemWr -&gt; 应命中 MEM_WR，payload 直接写入 memory window，不会再走 CC。</span><br></pre></td></tr></table></figure>
+
+<p>同样是 completion queue 相关地址：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">Admin CQE 写回 -&gt; ACQ_rx_req_tlp_valid</span><br><span class="line">IO CQE 写回    -&gt; IOCQ_rx_req_tlp_valid</span><br></pre></td></tr></table></figure>
+
+<p>如果只看公共 <code>rx_req_tlp_hdr</code>，很容易误判；真正确认路径时要看 route 后的 valid 和 ready 是否 fire。</p>
+<h2 id="4-6-CC：Completer-Completion"><a href="#4-6-CC：Completer-Completion" class="headerlink" title="4.6 CC：Completer Completion"></a>4.6 CC：Completer Completion</h2><p>CC 是 FPGA 响应 SSD 的 Memory Read 时返回的 completion。</p>
+<p>SSD 读取 FPGA 里的 SQE、PRP List 和数据 buffer 时，都会从 CQ 发起 MemRd；FPGA 必须通过 CC 返回 CplD。</p>
+<p>当前工程中，CC 的来源包括：</p>
+<ul>
+<li>ASQ 返回 Admin SQE。</li>
+<li>IOSQ 返回 IO SQE。</li>
+<li>PRP 返回 PRP List entries。</li>
+<li>Memory 返回数据 buffer。</li>
+</ul>
+<p>代码路径可以概括为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">ASQ / IOSQ / PRP / pcie_memory_clt_top</span><br><span class="line">-&gt; *_tx_cpl_tlp_*</span><br><span class="line">-&gt; SSD_pcie_us</span><br><span class="line">-&gt; CC_round_robin</span><br><span class="line">-&gt; pcie_us</span><br><span class="line">-&gt; pcie_dma_if</span><br><span class="line">-&gt; Xilinx PCIe IP s_axis_cc</span><br><span class="line">-&gt; SSD</span><br></pre></td></tr></table></figure>
+
+<p><code>CC_round_robin</code> 负责把多个 completion source 仲裁到同一个 CC 通道。对当前 16KB Write 调试来说，最关键的是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">IOSQ CplD：返回 64B SQE</span><br><span class="line">PRP CplD：返回 PRP list entries</span><br><span class="line">MEM CplD：返回 16KB payload 分片</span><br></pre></td></tr></table></figure>
+
+<p>当前用户侧数据宽度是 256 bit，也就是一拍 32B。上板时如果 MPS 配置或协商后按 128B 处理，那么一个满 payload CplD 通常对应：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">128B / 32B = 4 beats</span><br></pre></td></tr></table></figure>
+
+<p>因此，memory CplD 不应该长期只返回 32B 小包。对 16KB Write 来说，SSD 读取 FPGA data buffer 时会产生多笔 MemRd，FPGA memory 模块需要按请求长度和 MPS 限制切分 completion。每一笔 CplD 都要保持：</p>
+<ul>
+<li>header 中 length、byte count、lower address 等字段与 payload 匹配。</li>
+<li><code>valid &amp;&amp; ready</code> 时才能推进 beat 计数。</li>
+<li><code>ready=0</code> 时 header、data、strb、sop&#x2F;eop 不能提前切到下一拍。</li>
+<li>最后一拍的 <code>eop</code> 和 <code>strb</code> 要和实际 payload 尾部一致。</li>
+</ul>
+<p>这部分曾经是上板调试里比较容易暴露问题的地方。只看 data 内容不够，还要同时看 header、strb、sop&#x2F;eop 和 ready&#x2F;valid。</p>
+<h2 id="4-7-四通道在工程中的汇聚和分发"><a href="#4-7-四通道在工程中的汇聚和分发" class="headerlink" title="4.7 四通道在工程中的汇聚和分发"></a>4.7 四通道在工程中的汇聚和分发</h2><p>当前工程不是直接在 <code>SSD_ctl</code> 里操作 Xilinx 原始 AXI-Stream，而是经过了适配和内部 TLP 信号封装。可以按下面理解：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">Xilinx PCIe IP</span><br><span class="line">-&gt; pcie_dma_if / pcie_us_if</span><br><span class="line">-&gt; 内部 TLP 信号</span><br><span class="line">-&gt; SSD_pcie_us</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>SSD_pcie_us</code> 内部，三个关键功能分别是：</p>
+<table>
+<thead>
+<tr>
+<th>功能</th>
+<th>方向</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>RQ_round_robin</code></td>
+<td>多路请求 -&gt; RQ</td>
+<td>汇聚 queue&#x2F;doorbell 等 FPGA 主动请求</td>
+</tr>
+<tr>
+<td><code>CQ_route</code></td>
+<td>CQ -&gt; 多路模块</td>
+<td>按地址和 TLP 类型分发 SSD 访问 FPGA 的请求</td>
+</tr>
+<tr>
+<td><code>CC_round_robin</code></td>
+<td>多路 completion -&gt; CC</td>
+<td>汇聚 ASQ&#x2F;IOSQ&#x2F;PRP&#x2F;MEM 返回的 CplD</td>
+</tr>
+</tbody></table>
+<p>这三个模块对应的是三类典型问题：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">RQ 发不出去：看 RQ_round_robin、tx_req_tlp_valid/ready、doorbell 源。</span><br><span class="line">CQ 分错路：看 CQ_route 地址命中、MemRd/MemWr 类型和各路 valid。</span><br><span class="line">CC 回不去：看 CC_round_robin、各源 tx_cpl_tlp_valid/ready、MPS 分包。</span><br></pre></td></tr></table></figure>
+
+<p>这种拆分对调试很有用，因为一次 NVMe Write 命令至少会同时经过 IOSQ、PRP 和 MEM 三类 CC source。如果 CC 汇聚有优先级或 ready&#x2F;valid 问题，SSD 就可能只读到 SQE，后续 PRP 或 data 不继续。</p>
+<h2 id="4-8-16KB-Write-中四通道的实际使用"><a href="#4-8-16KB-Write-中四通道的实际使用" class="headerlink" title="4.8 16KB Write 中四通道的实际使用"></a>4.8 16KB Write 中四通道的实际使用</h2><p>一次 16KB NVMe Write 过程中，四通道大致这样出现：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">RQ:</span><br><span class="line">    FPGA 写 IO SQ doorbell，通知 SSD 有新命令。</span><br><span class="line"></span><br><span class="line">CQ:</span><br><span class="line">    SSD 读 IOSQ 中的 SQE。</span><br><span class="line">    SSD 读 PRP List。</span><br><span class="line">    SSD 读 FPGA memory window 中的 16KB payload。</span><br><span class="line">    SSD 写 IOCQ completion。</span><br><span class="line"></span><br><span class="line">CC:</span><br><span class="line">    FPGA 返回 SQE CplD。</span><br><span class="line">    FPGA 返回 PRP List CplD。</span><br><span class="line">    FPGA 返回 Memory CplD。</span><br><span class="line"></span><br><span class="line">RC:</span><br><span class="line">    主 IO 数据路径中不参与；初始化/枚举相关 completion 在 pcie_us 内部处理。</span><br></pre></td></tr></table></figure>
+
+<p>按时间顺序展开，可以写成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">1. FPGA 通过 AXI4 先把 16KB 待写数据放入 memory window。</span><br><span class="line">2. AXI-Lite 触发 NVMe Write，Command 模块构造 IOSQ SQE。</span><br><span class="line">3. Queue 模块把 SQE 放入 IOSQ，并通过 RQ 写 SSD SQ doorbell。</span><br><span class="line">4. SSD 通过 CQ/MemRd 读取 IOSQ 中的 64B SQE。</span><br><span class="line">5. FPGA 通过 CC 返回 IOSQ CplD。</span><br><span class="line">6. SSD 发现命令跨多页，通过 CQ/MemRd 读取 PRP List。</span><br><span class="line">7. FPGA 通过 CC 返回 PRP entry。</span><br><span class="line">8. SSD 根据 PRP 指向的数据地址，通过 CQ/MemRd 读取 16KB data buffer。</span><br><span class="line">9. FPGA memory 模块通过 CC 返回多笔 CplD。</span><br><span class="line">10. SSD 完成写入后，通过 CQ/MemWr 写 IOCQ CQE。</span><br><span class="line">11. Queue/Command 模块解析 CQE，匹配 CID，产生 io_wr_done。</span><br></pre></td></tr></table></figure>
+
+<p>这条路径说明一个关键事实：NVMe Write 的大数据 payload 并不是 FPGA 主动 RQ 写给 SSD，而是 SSD 根据 PRP 地址主动从 FPGA 读走。</p>
+<h2 id="4-9-16KB-Read-中四通道的实际使用"><a href="#4-9-16KB-Read-中四通道的实际使用" class="headerlink" title="4.9 16KB Read 中四通道的实际使用"></a>4.9 16KB Read 中四通道的实际使用</h2><p>一次 16KB NVMe Read 过程中：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">RQ:</span><br><span class="line">    FPGA 写 IO SQ doorbell。</span><br><span class="line"></span><br><span class="line">CQ:</span><br><span class="line">    SSD 读 IOSQ 中的 SQE。</span><br><span class="line">    SSD 读 PRP List。</span><br><span class="line">    SSD 通过 MemWr 把数据写入 FPGA memory window。</span><br><span class="line">    SSD 写 IOCQ completion。</span><br><span class="line"></span><br><span class="line">CC:</span><br><span class="line">    FPGA 返回 SQE CplD。</span><br><span class="line">    FPGA 返回 PRP List CplD。</span><br><span class="line">    读命令的数据本体由 SSD MemWr 写入 FPGA，所以数据本体不需要 FPGA 返回 CC。</span><br><span class="line"></span><br><span class="line">RC:</span><br><span class="line">    主 IO 数据路径中不参与。</span><br></pre></td></tr></table></figure>
+
+<p>按时间顺序展开，可以写成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">1. AXI-Lite 触发 NVMe Read，Command 模块构造 IOSQ SQE。</span><br><span class="line">2. Queue 模块通过 RQ 写 SSD SQ doorbell。</span><br><span class="line">3. SSD 通过 CQ/MemRd 读取 IOSQ 中的 64B SQE。</span><br><span class="line">4. FPGA 通过 CC 返回 IOSQ CplD。</span><br><span class="line">5. SSD 通过 CQ/MemRd 读取 PRP List。</span><br><span class="line">6. FPGA 通过 CC 返回 PRP entry。</span><br><span class="line">7. SSD 从自身 NAND/缓存中取出数据，通过 CQ/MemWr 写 FPGA memory window。</span><br><span class="line">8. memory 模块接收 MemWr payload，把数据保存到 destination buffer。</span><br><span class="line">9. SSD 通过 CQ/MemWr 写 IOCQ CQE。</span><br><span class="line">10. Queue/Command 模块解析 CQE，匹配 CID，产生 io_rd_done。</span><br><span class="line">11. 外部 AXI4 从 destination buffer 读出 16KB 并校验。</span><br></pre></td></tr></table></figure>
+
+<p>这条路径和 Write 最大的不同在于：Read 的数据本体是 SSD 主动写回 FPGA memory window，所以数据 payload 不走 CC。CC 只用于返回 SQE 和 PRP List。</p>
+<h2 id="4-10-ILA-观测和路径判断"><a href="#4-10-ILA-观测和路径判断" class="headerlink" title="4.10 ILA 观测和路径判断"></a>4.10 ILA 观测和路径判断</h2><p>上板调试时，四通道可以按层级观察，不需要一开始就抓所有信号。</p>
+<table>
+<thead>
+<tr>
+<th>问题现象</th>
+<th>优先观察</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>init_done</code> 不起来</td>
+<td>RQ&#x2F;RC、枚举状态、NVMe init 状态</td>
+</tr>
+<tr>
+<td><code>queue_init_done</code> 不起来</td>
+<td>RQ doorbell、ASQ_rx_req、ACQ_rx_req、Admin command done</td>
+</tr>
+<tr>
+<td>Write 命令卡住</td>
+<td>IOSQ_rx_req、PRP_rx_req、MEM_RD_rx_req、MEM_tx_cpl、IOCQ_rx_req</td>
+</tr>
+<tr>
+<td>Read 命令卡住</td>
+<td>IOSQ_rx_req、PRP_rx_req、MEM_WR_rx_req、IOCQ_rx_req</td>
+</tr>
+<tr>
+<td>completion 不匹配</td>
+<td>IOCQ_rx_req、queue_cpl_route、command_done_valid、CID&#x2F;SQID&#x2F;status</td>
+</tr>
+<tr>
+<td>data 比较失败</td>
+<td>MEM_WR&#x2F;MEM_RD 地址、strb、payload 顺序、AXI RAM 地址映射</td>
+</tr>
+</tbody></table>
+<p>对每条路径，建议至少抓：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">valid</span><br><span class="line">ready</span><br><span class="line">sop</span><br><span class="line">eop</span><br><span class="line">strb</span><br><span class="line">hdr</span><br><span class="line">data</span><br><span class="line">route hit 或 selected source</span><br></pre></td></tr></table></figure>
+
+<p>触发点可以按问题选择：</p>
+<ul>
+<li>SSD 不读 SQE：触发 <code>IOSQ_rx_req_tlp_valid</code>。</li>
+<li>SSD 不读 PRP：触发 <code>PRP_rx_req_tlp_valid</code> 或 <code>CQ_route_hit_prp</code>。</li>
+<li>SSD 不读 data：触发 <code>MEM_RD_rx_req_tlp_valid</code>。</li>
+<li>SSD 读回数据不对：触发 <code>MEM_tx_cpl_tlp_valid</code>，同时观察 header&#x2F;data&#x2F;strb。</li>
+<li>Read 数据没有写入 FPGA：触发 <code>MEM_WR_rx_req_tlp_valid</code>。</li>
+<li>命令完成但没有 done：触发 <code>IOCQ_rx_req_tlp_valid</code> 和 <code>command_done_valid</code>。</li>
+</ul>
+<h2 id="4-11-ready-valid-和流控关系"><a href="#4-11-ready-valid-和流控关系" class="headerlink" title="4.11 ready&#x2F;valid 和流控关系"></a>4.11 ready&#x2F;valid 和流控关系</h2><p>当前工程主要依赖 AXI-Stream <code>ready/valid</code> 背压保证 TLP 传输正确性。PCIe IP 也暴露了 credit 观测接口，例如 <code>cfg_fc_ph/pd/nph/npd/cplh/cpld</code>，但当前没有把它们做成完整的 credit-aware 调度。</p>
+<p>当前实现中最重要的规则是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">fire = valid &amp;&amp; ready;</span><br></pre></td></tr></table></figure>
+
+<p>状态机里的地址递增、payload beat 计数、header 切换、<code>sop/eop</code> 推进，都应该跟随 <code>fire</code>。如果 <code>ready</code> 被 PCIe IP 拉低，而状态机仍然继续更新 header 或 data，就会出现几类典型问题：</p>
+<ul>
+<li>最后一拍数据重复或丢失。</li>
+<li>header 对应的是上一笔请求，data 对应的是下一笔请求。</li>
+<li><code>eop</code> 提前或滞后。</li>
+<li>CplD length 和实际 payload beat 数不一致。</li>
+<li>SSD 后续不再继续读 PRP 或 data，最终命令超时。</li>
+</ul>
+<p><code>cfg_fc_*</code> credit 信号可以作为后续优化方向，用来判断 PCIe IP 内部 header&#x2F;data credit 是否紧张。但当前工程的基础正确性仍然优先依赖 ready&#x2F;valid 和 FIFO&#x2F;arbiter 的背压处理。</p>
+<h2 id="4-12-章节总结"><a href="#4-12-章节总结" class="headerlink" title="4.12 章节总结"></a>4.12 章节总结</h2><p>本章核心是把 PCIe IP 的四条 AXI-Stream 通道和 NVMe 运行时行为对应起来：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">RQ/RC：FPGA 主动访问 SSD，主要用于枚举、初始化、doorbell 和寄存器读写。</span><br><span class="line">CQ/CC：SSD 主动访问 FPGA，主要用于读取 SQE/PRP/data，以及写回 CQE/read data。</span><br></pre></td></tr></table></figure>
+
+<p>对于当前 SSD 控制器，运行时最重要的是 CQ&#x2F;CC：SSD 收到 doorbell 后，会通过 CQ 读取 FPGA 里的队列、PRP 和数据；FPGA 必须通过 CC 正确返回 CplD。NVMe Write 的 payload 是 SSD 通过 CQ MemRd 主动读走，NVMe Read 的 payload 是 SSD 通过 CQ MemWr 主动写回。</p>
+<p>因此调试时不能只看命令是否发出，还要沿着下面链路确认：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">doorbell 是否发出</span><br><span class="line">SSD 是否读取 IOSQ</span><br><span class="line">SSD 是否读取 PRP List</span><br><span class="line">SSD 是否读取或写入 memory window</span><br><span class="line">SSD 是否写回 IOCQ</span><br><span class="line">command_record 是否匹配 CID 并产生 done</span><br></pre></td></tr></table></figure>
+
+<p>这条链路打通后，Command、Queue、PRP 和 Memory 才真正组成完整的 NVMe over PCIe 硬件读写闭环。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/" data-id="cmpf3dfkq0000aci7d19z6mde" data-title="FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+
+  
     <article id="post-fpga-nvme-host-03-architecture" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
   <div class="article-meta">
     <a href="/2026/05/20/fpga-nvme-host-03-architecture/" class="article-date">
@@ -1511,23 +2731,23 @@
       <ul>
         
           <li>
+            <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05-init-queue/">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/">FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流</a>
+          </li>
+        
+          <li>
             <a href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
           </li>
         
           <li>
             <a href="/2026/05/20/fpga-nvme-host-02-pcie-nvme-basics/">FPGA NVMe Host 项目记录（二）：PCIe、NVMe 与 IP 配置</a>
-          </li>
-        
-          <li>
-            <a href="/2026/05/20/fpga-nvme-host-01-background/">FPGA NVMe Host 项目记录（一）：背景与目标</a>
-          </li>
-        
-          <li>
-            <a href="/2026/01/20/board-debugging/">上板调试</a>
-          </li>
-        
-          <li>
-            <a href="/2025/09/11/hello-world/">Hello World</a>
           </li>
         
       </ul>
