@@ -110,22 +110,22 @@
     <div class="e-content article-entry" itemprop="articleBody">
       
         <h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
-<li><a href="#8.1-%E6%9C%AC%E7%AB%A0%E5%AE%9A%E4%BD%8D">8.1 本章定位</a></li>
-<li><a href="#8.2-%E6%BA%90%E7%A0%81%E6%96%87%E4%BB%B6%E5%AF%B9%E5%BA%94%E5%85%B3%E7%B3%BB">8.2 源码文件对应关系</a></li>
-<li><a href="#8.3-prp-%E6%A8%A1%E5%9D%97%E6%80%BB%E4%BD%93%E6%95%B0%E6%8D%AE%E6%B5%81">8.3 PRP 模块总体数据流</a></li>
-<li><a href="#8.4-%E5%BD%93%E5%89%8D%E6%9C%89%E6%95%88%E5%9C%B0%E5%9D%80%E4%B8%8E%E5%8F%82%E6%95%B0%E8%A7%84%E5%88%92">8.4 当前有效地址与参数规划</a></li>
-<li><a href="#8.5-prp_ctl-%E9%A1%B6%E5%B1%82%E8%81%8C%E8%B4%A3">8.5 prp_ctl 顶层职责</a></li>
-<li><a href="#8.6-prp-%E5%91%BD%E4%BB%A4%E7%BC%93%E5%AD%98-prp_command_cache">8.6 PRP 命令缓存 prp_command_cache</a></li>
-<li><a href="#8.7-cid-%E8%8E%B7%E5%8F%96%E4%B8%8E-prp-%E8%AE%A1%E7%AE%97-prp_core_calc">8.7 CID 获取与 PRP 计算 prp_core_calc</a></li>
-<li><a href="#8.8-prp1-/-prp2-%E7%94%9F%E6%88%90%E8%A7%84%E5%88%99">8.8 PRP1 &#x2F; PRP2 生成规则</a></li>
-<li><a href="#8.9-prp-list-%E4%B8%8A%E4%B8%8B%E6%96%87-prp_list_ctx">8.9 PRP List 上下文 prp_list_ctx</a></li>
-<li><a href="#8.10-ssd-%E8%AF%BB%E5%8F%96-prp-list-%E7%9A%84-cq/cc-%E8%B7%AF%E5%BE%84">8.10 SSD 读取 PRP List 的 CQ&#x2F;CC 路径</a></li>
-<li><a href="#8.11-%E4%B8%8E-cq_route-%E5%92%8C-cc_round_robin-%E7%9A%84%E8%BF%9E%E6%8E%A5">8.11 与 CQ_route 和 CC_round_robin 的连接</a></li>
-<li><a href="#8.12-%E4%B8%8E-command%E3%80%81axi-lite%E3%80%81memory-%E6%A8%A1%E5%9D%97%E7%9A%84%E5%85%B3%E7%B3%BB">8.12 与 Command、AXI-Lite、Memory 模块的关系</a></li>
-<li><a href="#8.13-16kb-%E9%A1%BA%E5%BA%8F%E8%AF%BB%E5%86%99%E7%A4%BA%E4%BE%8B">8.13 16KB 顺序读写示例</a></li>
-<li><a href="#8.14-%E4%BB%BF%E7%9C%9F%E9%AA%8C%E8%AF%81%E8%A6%86%E7%9B%96%E7%82%B9">8.14 仿真验证覆盖点</a></li>
-<li><a href="#8.15-%E5%AE%9E%E7%8E%B0%E6%B3%A8%E6%84%8F%E4%BA%8B%E9%A1%B9">8.15 实现注意事项</a></li>
-<li><a href="#8.16-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">8.16 章节总结</a></li>
+<li><a href="#8-1-%E6%9C%AC%E7%AB%A0%E5%AE%9A%E4%BD%8D">8.1 本章定位</a></li>
+<li><a href="#8-2-%E6%BA%90%E7%A0%81%E6%96%87%E4%BB%B6%E5%AF%B9%E5%BA%94%E5%85%B3%E7%B3%BB">8.2 源码文件对应关系</a></li>
+<li><a href="#8-3-PRP-%E6%A8%A1%E5%9D%97%E6%80%BB%E4%BD%93%E6%95%B0%E6%8D%AE%E6%B5%81">8.3 PRP 模块总体数据流</a></li>
+<li><a href="#8-4-%E5%BD%93%E5%89%8D%E6%9C%89%E6%95%88%E5%9C%B0%E5%9D%80%E4%B8%8E%E5%8F%82%E6%95%B0%E8%A7%84%E5%88%92">8.4 当前有效地址与参数规划</a></li>
+<li><a href="#8-5-prp-ctl-%E9%A1%B6%E5%B1%82%E8%81%8C%E8%B4%A3">8.5 prp_ctl 顶层职责</a></li>
+<li><a href="#8-6-PRP-%E5%91%BD%E4%BB%A4%E7%BC%93%E5%AD%98-prp-command-cache">8.6 PRP 命令缓存 prp_command_cache</a></li>
+<li><a href="#8-7-CID-%E8%8E%B7%E5%8F%96%E4%B8%8E-PRP-%E8%AE%A1%E7%AE%97-prp-core-calc">8.7 CID 获取与 PRP 计算 prp_core_calc</a></li>
+<li><a href="#8-8-PRP1-PRP2-%E7%94%9F%E6%88%90%E8%A7%84%E5%88%99">8.8 PRP1 &#x2F; PRP2 生成规则</a></li>
+<li><a href="#8-9-PRP-List-%E4%B8%8A%E4%B8%8B%E6%96%87-prp-list-ctx">8.9 PRP List 上下文 prp_list_ctx</a></li>
+<li><a href="#8-10-SSD-%E8%AF%BB%E5%8F%96-PRP-List-%E7%9A%84-CQ-CC-%E8%B7%AF%E5%BE%84">8.10 SSD 读取 PRP List 的 CQ&#x2F;CC 路径</a></li>
+<li><a href="#8-11-%E4%B8%8E-CQ-route-%E5%92%8C-CC-round-robin-%E7%9A%84%E8%BF%9E%E6%8E%A5">8.11 与 CQ_route 和 CC_round_robin 的连接</a></li>
+<li><a href="#8-12-%E4%B8%8E-Command-AXI-Lite-Memory-%E6%A8%A1%E5%9D%97%E7%9A%84%E5%85%B3%E7%B3%BB">8.12 与 Command、AXI-Lite、Memory 模块的关系</a></li>
+<li><a href="#8-13-16KB-%E9%A1%BA%E5%BA%8F%E8%AF%BB%E5%86%99%E7%A4%BA%E4%BE%8B">8.13 16KB 顺序读写示例</a></li>
+<li><a href="#8-14-%E4%BB%BF%E7%9C%9F%E9%AA%8C%E8%AF%81%E8%A6%86%E7%9B%96%E7%82%B9">8.14 仿真验证覆盖点</a></li>
+<li><a href="#8-15-%E5%AE%9E%E7%8E%B0%E6%B3%A8%E6%84%8F%E4%BA%8B%E9%A1%B9">8.15 实现注意事项</a></li>
+<li><a href="#8-16-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">8.16 章节总结</a></li>
 </ul>
 <blockquote>
 <p>本章以最新工程 <code>C:\Users\10202\Desktop\Learn\pcie\nvme_host_v2\src</code> 中的 PRP 相关源码为准，主要对应 <code>prp_ctl.v</code>、<code>prp_command_cache.v</code>、<code>prp_core_calc.v</code>、<code>prp_list_ctx.v</code>、<code>prp_cq_tlp.v</code>、<code>prp_cc_tlp.v</code>、<code>CQ_route.v</code>、<code>CC_round_robin.v</code>、<code>SSD_pcie_us.v</code> 和 <code>SSD_ctl.v</code>。</p>
