@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="650" viewBox="0 0 1180 650" role="img" aria-labelledby="title desc">
+  <title id="title">Command module flow</title>
+  <desc id="desc">Command control flow including CID allocation, PRP, command construction, command record, completion, and watchdog.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.4; rx: 8; ry: 8; }
+      .in { fill: #eff6ff; }
+      .core { fill: #fff7ed; }
+      .rec { fill: #f0fdf4; }
+      .err { fill: #fef2f2; }
+      .box-title { font-size: 16px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .mono { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12px; fill: #334155; }
+      .lane { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 7 6; }
+      .tag { font-size: 13px; fill: #0369a1; font-weight: 700; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="1180" height="650" fill="#ffffff"/>
+  <text x="44" y="48" class="title">Command 模块：CID 生命周期与完成匹配</text>
+  <text x="44" y="75" class="subtitle">command_ctl 负责从命令参数到 SQE，再从 CQE 回到 done/status 的闭环</text>
+
+  <rect x="55" y="130" width="245" height="110" class="box in"/>
+  <text x="80" y="163" class="box-title">命令来源</text>
+  <text x="80" y="191" class="small">legacy init command</text>
+  <text x="80" y="216" class="small">AXI-Lite command</text>
+
+  <rect x="360" y="130" width="245" height="110" class="box core"/>
+  <text x="385" y="163" class="box-title">PRP / CID 入口</text>
+  <text x="385" y="191" class="small">PRP 计算得到 PRP1/PRP2</text>
+  <text x="385" y="216" class="small">向 ID pool 请求 CID</text>
+
+  <rect x="665" y="130" width="245" height="110" class="box core"/>
+  <text x="690" y="163" class="box-title">command_construct</text>
+  <text x="690" y="191" class="small">构造 512-bit NVMe SQE</text>
+  <text x="690" y="216" class="small">区分 Admin / IO opcode</text>
+
+  <rect x="55" y="330" width="245" height="120" class="box rec"/>
+  <text x="80" y="363" class="box-title">command_record</text>
+  <text x="80" y="391" class="mono">CID -> queue_id</text>
+  <text x="80" y="416" class="mono">type / opcode / state</text>
+  <text x="80" y="441" class="mono">issue_time / context</text>
+
+  <rect x="360" y="330" width="245" height="120" class="box rec"/>
+  <text x="385" y="363" class="box-title">completion 汇聚</text>
+  <text x="385" y="391" class="small">Admin CQE + 16 路 IO CQE</text>
+  <text x="385" y="416" class="small">round robin 输入 command_record</text>
+  <text x="385" y="441" class="small">检查 CID / queue / status</text>
+
+  <rect x="665" y="330" width="245" height="120" class="box err"/>
+  <text x="690" y="363" class="box-title">error / watchdog</text>
+  <text x="690" y="391" class="small">timeout / mismatch / lookup miss</text>
+  <text x="690" y="416" class="small">last_error 与计数器</text>
+  <text x="690" y="441" class="small">AXI-Lite 可清除</text>
+
+  <rect x="940" y="230" width="190" height="120" class="box rec"/>
+  <text x="962" y="263" class="box-title">输出状态</text>
+  <text x="962" y="291" class="mono">admin_cq_done</text>
+  <text x="962" y="316" class="mono">nvme_queue_done</text>
+  <text x="962" y="341" class="mono">io_wr_done / io_rd_done</text>
+
+  <path d="M300 185 C325 185 335 185 358 185" class="lane"/>
+  <path d="M605 185 C630 185 640 185 663 185" class="lane"/>
+  <path d="M787 240 C787 292 180 292 180 328" class="lane"/>
+  <path d="M180 450 C180 520 1035 520 1035 352" class="lane"/>
+  <path d="M910 185 C952 185 1035 185 1035 228" class="lane"/>
+  <path d="M300 390 C325 390 335 390 358 390" class="lane"/>
+  <path d="M605 390 C630 390 640 390 663 390" class="lane"/>
+  <path d="M1035 352 C1035 470 790 470 790 452" class="lane dash"/>
+
+  <text x="316" y="168" class="tag">valid/ready</text>
+  <text x="650" y="506" class="tag">done/error/status 回读</text>
+</svg>

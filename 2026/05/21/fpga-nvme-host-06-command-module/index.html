@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+  
+  <title>FPGA NVMe Host 项目记录（六）：Command 模块设计 | LI HUALOU</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="本章以最新工程 C:\Users\10202\Desktop\Learn\pcie\nvme_host_v2\src 中的 Command 相关源码为准，主要对应 command_ctl.v、command_cache.v、command_id_pool.v、command_construct.v、command_record.v、command_record_round_robin.v、com">
+<meta property="og:type" content="article">
+<meta property="og:title" content="FPGA NVMe Host 项目记录（六）：Command 模块设计">
+<meta property="og:url" content="https://seattlice.github.io/2026/05/21/fpga-nvme-host-06-command-module/index.html">
+<meta property="og:site_name" content="LI HUALOU">
+<meta property="og:description" content="本章以最新工程 C:\Users\10202\Desktop\Learn\pcie\nvme_host_v2\src 中的 Command 相关源码为准，主要对应 command_ctl.v、command_cache.v、command_id_pool.v、command_construct.v、command_record.v、command_record_round_robin.v、com">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/6-command-module-flow.svg">
+<meta property="article:published_time" content="2026-05-20T16:50:00.000Z">
+<meta property="article:modified_time" content="2026-05-20T16:50:00.000Z">
+<meta property="article:author" content="LI HUALOU">
+<meta property="article:tag" content="NVMe">
+<meta property="article:tag" content="PCIe">
+<meta property="article:tag" content="FPGA">
+<meta property="article:tag" content="RTL">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://seattlice.github.io/images/nvme-host/6-command-module-flow.svg">
+  
+    <link rel="alternate" href="/atom.xml" title="LI HUALOU" type="application/atom+xml">
+  
+  
+    <link rel="shortcut icon" href="/favicon.png">
+  
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+    
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+
+  
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fork-awesome@1.2.0/css/fork-awesome.min.css">
+
+<meta name="generator" content="Hexo 7.3.0"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">LI HUALOU</a>
+      </h1>
+      
+        <h2 id="subtitle-wrap">
+          <a href="/" id="subtitle">HUALOU</a>
+        </h2>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+        
+          <a class="nav-icon" href="/atom.xml" title="RSS 订阅"><span class="fa fa-rss"></span></a>
+        
+        <a class="nav-icon nav-search-btn" title="搜索"><span class="fa fa-search"></span></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="搜索"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="https://seattlice.github.io"></form>
+      </div>
+    </div>
+  </div>
+</header>
+
+      <div class="outer">
+        <section id="main"><article id="post-fpga-nvme-host-06-command-module" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-06-command-module/" class="article-date">
+  <time class="dt-published" datetime="2026-05-20T16:50:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="p-name article-title" itemprop="headline name">
+      FPGA NVMe Host 项目记录（六）：Command 模块设计
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>本章以最新工程 <code>C:\Users\10202\Desktop\Learn\pcie\nvme_host_v2\src</code> 中的 Command 相关源码为准，主要对应 <code>command_ctl.v</code>、<code>command_cache.v</code>、<code>command_id_pool.v</code>、<code>command_construct.v</code>、<code>command_record.v</code>、<code>command_record_round_robin.v</code>、<code>command_error_ctl.v</code>、<code>cmd_source_mux.v</code> 和 <code>nvme_command_ctl.v</code>。</p>
+</blockquote>
+<p><img src="/images/nvme-host/6-command-module-flow.svg" alt="图 6-1 Command 模块数据流"></p>
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#6-1-%E6%9C%AC%E7%AB%A0%E5%AE%9A%E4%BD%8D">6.1 本章定位</a></li>
+<li><a href="#6-2-%E6%BA%90%E7%A0%81%E6%96%87%E4%BB%B6%E5%AF%B9%E5%BA%94%E5%85%B3%E7%B3%BB">6.2 源码文件对应关系</a></li>
+<li><a href="#6-3-Command-%E6%A8%A1%E5%9D%97%E6%80%BB%E4%BD%93%E6%95%B0%E6%8D%AE%E6%B5%81">6.3 Command 模块总体数据流</a></li>
+<li><a href="#6-4-%E5%91%BD%E4%BB%A4%E8%BE%93%E5%85%A5%E4%B8%8E%E7%BC%93%E5%AD%98-commandcache">6.4 命令输入与缓存 command_cache</a></li>
+<li><a href="#6-5-CID-%E6%B1%A0-commandidpool">6.5 CID 池 command_id_pool</a></li>
+<li><a href="#6-6-NVMe-SQE-%E6%9E%84%E9%80%A0-commandconstruct">6.6 NVMe SQE 构造 command_construct</a></li>
+<li><a href="#6-7-%E5%91%BD%E4%BB%A4%E7%9C%9F%E6%AD%A3%E4%B8%8B%E5%8F%91%E4%B8%8E-record-issue">6.7 命令真正下发与 record issue</a></li>
+<li><a href="#6-8-completion-%E6%B1%87%E8%81%9A-commandrecordroundrobin">6.8 completion 汇聚 command_record_round_robin</a></li>
+<li><a href="#6-9-%E5%91%BD%E4%BB%A4%E8%AE%B0%E5%BD%95%E8%A1%A8-commandrecord">6.9 命令记录表 command_record</a></li>
+<li><a href="#6-10-done-%E4%BF%A1%E5%8F%B7%E4%B8%8E%E5%88%9D%E5%A7%8B%E5%8C%96%E6%B5%81%E7%A8%8B%E7%9A%84%E5%85%B3%E7%B3%BB">6.10 done 信号与初始化流程的关系</a></li>
+<li><a href="#6-11-%E9%94%99%E8%AF%AF%E5%A4%84%E7%90%86-commanderrorctl">6.11 错误处理 command_error_ctl</a></li>
+<li><a href="#6-12-Watchdog-%E4%B8%8E%E8%B6%85%E6%97%B6%E7%AD%96%E7%95%A5">6.12 Watchdog 与超时策略</a></li>
+<li><a href="#6-13-AXI-Lite-%E7%8A%B6%E6%80%81%E5%9B%9E%E8%AF%BB%E5%85%B3%E7%B3%BB">6.13 AXI-Lite 状态回读关系</a></li>
+<li><a href="#6-14-%E5%BD%93%E5%89%8D%E5%AE%9E%E7%8E%B0%E9%9C%80%E8%A6%81%E6%B3%A8%E6%84%8F%E7%9A%84%E7%BB%86%E8%8A%82">6.14 当前实现需要注意的细节</a><ul>
+<li><a href="#6-14-1-CID-0-%E5%BD%93%E5%89%8D%E4%BC%9A%E8%A2%AB%E4%BD%BF%E7%94%A8">6.14.1 CID 0 当前会被使用</a></li>
+<li><a href="#6-14-2-timeout-%E4%B8%8D%E7%AB%8B%E5%8D%B3%E9%87%8A%E6%94%BE-CID-%E6%98%AF%E6%AD%A3%E7%A1%AE%E9%80%89%E6%8B%A9">6.14.2 timeout 不立即释放 CID 是正确选择</a></li>
+<li><a href="#6-14-3-completion-%E6%B1%87%E8%81%9A-FIFO-%E6%B7%B1%E5%BA%A6%E4%B8%8D%E6%98%AF%E6%97%A0%E9%99%90%E7%9A%84">6.14.3 completion 汇聚 FIFO 深度不是无限的</a></li>
+<li><a href="#6-14-4-Admin-path-%E9%87%8C%E7%9A%84-ilba-%E6%98%AF%E5%A4%8D%E7%94%A8%E5%AD%97%E6%AE%B5">6.14.4 Admin path 里的 i_lba 是复用字段</a></li>
+<li><a href="#6-14-5-ioidvalid-%E6%98%AF%E5%85%BC%E5%AE%B9%E6%97%A7%E6%8E%A5%E5%8F%A3">6.14.5 <code>io_id_valid</code> 是兼容旧接口</a></li>
+<li><a href="#6-14-6-issuecontext-%E5%BD%93%E5%89%8D%E6%9A%82%E6%97%B6%E4%B8%BA-0">6.14.6 issue_context 当前暂时为 0</a></li>
+</ul>
+</li>
+<li><a href="#6-15-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">6.15 章节总结</a></li>
+</ul>
+<h2 id="6-1-本章定位"><a href="#6-1-本章定位" class="headerlink" title="6.1 本章定位"></a>6.1 本章定位</h2><p>Command 模块是当前 NVMe Host 控制器里的“命令生命周期管理层”。它不直接解析 PCIe TLP，也不直接搬运数据 payload，而是负责把上游给出的读写&#x2F;初始化请求变成 NVMe Submission Queue Entry，然后在 Completion Queue Entry 回来之后完成匹配、状态输出、资源回收和错误记录。</p>
+<p>这个模块需要解决三个核心问题：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">1. 命令怎么变成 NVMe SQE？</span><br><span class="line">2. 命令发出去后，怎么知道哪条 completion 对应哪条命令？</span><br><span class="line">3. 如果 completion 不回来、回来晚了、状态错误或队列不匹配，系统如何记录和上报？</span><br></pre></td></tr></table></figure>
+
+<p>NVMe 允许命令乱序完成，所以不能简单地按“发出顺序”判断完成顺序。当前设计采用全局 CID 池加全局 command record 表：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">CID 分配</span><br><span class="line">-&gt; SQE 构造</span><br><span class="line">-&gt; SQ 写入成功时记录 CID 上下文</span><br><span class="line">-&gt; CQE 返回时用 CID 查表</span><br><span class="line">-&gt; 匹配成功后释放 CID</span><br></pre></td></tr></table></figure>
+
+<p>这样 Admin command 和 IO command 可以共用一套命令记录与异常处理逻辑。后续从 1 个 IO queue 扩展到 16 个 IO queue 时，也不需要复制 16 份 command record，只要把 completion 汇聚到一个中心点即可。</p>
+<h2 id="6-2-源码文件对应关系"><a href="#6-2-源码文件对应关系" class="headerlink" title="6.2 源码文件对应关系"></a>6.2 源码文件对应关系</h2><p>Command 模块不是一个单文件状态机，而是一组小模块拼起来的命令通路。当前源码对应关系如下：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>位置</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>command_ctl.v</code></td>
+<td>Command 顶层</td>
+<td>连接 command cache、CID pool、SQE construct、record、RR、error_ctl，并输出 done&#x2F;error&#x2F;status</td>
+</tr>
+<tr>
+<td><code>command_cache.v</code></td>
+<td>命令入口 FIFO</td>
+<td>缓存上游输入的 command_type、opcode、nsid、PRP、LBA、length、CID</td>
+</tr>
+<tr>
+<td><code>command_id_pool.v</code></td>
+<td>CID 池</td>
+<td>复位后初始化可用 CID，命令需要 CID 时读出，completion 或非法命令后回收</td>
+</tr>
+<tr>
+<td><code>command_construct.v</code></td>
+<td>SQE 构造</td>
+<td>将缓存命令转换成 512-bit NVMe command，并分流到 Admin SQ 或 IO SQ</td>
+</tr>
+<tr>
+<td><code>command_record.v</code></td>
+<td>CID 记录表</td>
+<td>记录 <code>CID -&gt; queue_id/type/opcode/state/issue_time/context</code>，completion 返回时匹配</td>
+</tr>
+<tr>
+<td><code>command_record_round_robin.v</code></td>
+<td>completion 汇聚</td>
+<td>为 1 路 Admin + 16 路 IO completion 建 per-port FIFO，再轮询输出给 command_record</td>
+</tr>
+<tr>
+<td><code>command_error_ctl.v</code></td>
+<td>错误与恢复请求</td>
+<td>统计 timeout、late completion、lookup miss、status error、mismatch、FIFO overflow 等异常</td>
+</tr>
+<tr>
+<td><code>cmd_source_mux.v</code></td>
+<td>命令源选择</td>
+<td>在 AXI-Lite 命令源和外部高性能命令源之间切换</td>
+</tr>
+<tr>
+<td><code>nvme_command_ctl.v</code></td>
+<td>初始化命令源</td>
+<td>在队列初始化阶段产生 Create IO CQ &#x2F; Create IO SQ 等 Admin 命令</td>
+</tr>
+</tbody></table>
+<p>从层级关系看，<code>command_ctl.v</code> 是第六章的核心顶层。它内部例化的模块关系可以简化为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">command_ctl</span><br><span class="line">  ├─ command_cache</span><br><span class="line">  ├─ command_id_pool</span><br><span class="line">  ├─ command_construct</span><br><span class="line">  ├─ command_record_round_robin</span><br><span class="line">  ├─ command_record</span><br><span class="line">  └─ command_error_ctl</span><br></pre></td></tr></table></figure>
+
+<p>而 <code>cmd_source_mux.v</code> 和 <code>nvme_command_ctl.v</code> 位于 command 模块上游。它们决定“谁在给 command_ctl 喂命令”：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">初始化阶段：nvme_command_ctl / ADMIN_queue_init</span><br><span class="line">运行阶段：AXI-Lite regs 或 ext_cmd_desc</span><br></pre></td></tr></table></figure>
+
+<h2 id="6-3-Command-模块总体数据流"><a href="#6-3-Command-模块总体数据流" class="headerlink" title="6.3 Command 模块总体数据流"></a>6.3 Command 模块总体数据流</h2><p>当前 <code>command_ctl.v</code> 对外暴露的主输入命令字段包括：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">1</span>:<span class="number">0</span>]            i_command_type,</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">7</span>:<span class="number">0</span>]            i_opcode,</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>]           i_nsid,</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>]           i_prp1,</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>]           i_prp2,</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>]           i_lba,</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>]           i_length,</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>]   i_id,</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                  i_valid,</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                  i_ready,</span><br></pre></td></tr></table></figure>
+
+<p>这里的 <code>i_id</code> 是已经从 CID 池或上游 ID 管理逻辑拿到的 CID。Command 模块内部也例化了 <code>command_id_pool</code>，用于对外提供 CID：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                         id_requst,</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                         id_data_ready,</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [ID_WIDTH - <span class="number">1</span> : <span class="number">0</span>]      id_data,</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                         id_data_valid,</span><br></pre></td></tr></table></figure>
+
+<p>完整链路可以按时间顺序理解：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">1. 上游请求 CID。</span><br><span class="line">2. command_id_pool 输出 id_data。</span><br><span class="line">3. 上游携带 i_id、opcode、PRP、LBA、length 送入 command_ctl。</span><br><span class="line">4. command_cache 缓存命令。</span><br><span class="line">5. command_construct 生成 512-bit NVMe SQE。</span><br><span class="line">6. SQE 被 Admin queue 或 IO queue 接收。</span><br><span class="line">7. command_ctl 在 SQE ready/valid 握手成功时写 command_record。</span><br><span class="line">8. SSD 执行命令后写 CQE。</span><br><span class="line">9. Queue 模块解析 CQE，送回 CID、SQID/queue_id、status_ok。</span><br><span class="line">10. command_record 用 CID 查表，输出 done 或错误。</span><br><span class="line">11. CID 回收到 command_id_pool。</span><br></pre></td></tr></table></figure>
+
+<p><code>command_ctl.v</code> 中用于区分命令类型和 opcode 的局部参数如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] QUEUE_ID_ADMIN     = <span class="number">5&#x27;d0</span>;</span><br><span class="line"><span class="keyword">localparam</span> [QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] QUEUE_ID_IO0       = <span class="number">5&#x27;d1</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] CMD_TYPE_ADMIN = <span class="number">2&#x27;d1</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] CMD_TYPE_IO    = <span class="number">2&#x27;d3</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ADMIN_CREATE_IO_SQ = <span class="number">8&#x27;h01</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ADMIN_CREATE_IO_CQ = <span class="number">8&#x27;h05</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] IO_WRITE           = <span class="number">8&#x27;h01</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] IO_READ            = <span class="number">8&#x27;h02</span>;</span><br></pre></td></tr></table></figure>
+
+<p>这里有一个容易混淆的点：Admin opcode <code>8&#39;h01</code> 是 Create IO Submission Queue，IO opcode <code>8&#39;h01</code> 是 Write。两者编码相同，但属于不同 command set，所以必须同时看 <code>command_type</code> 和 <code>opcode</code>，不能只看 opcode。</p>
+<h2 id="6-4-命令输入与缓存-command-cache"><a href="#6-4-命令输入与缓存-command-cache" class="headerlink" title="6.4 命令输入与缓存 command_cache"></a>6.4 命令输入与缓存 command_cache</h2><p><code>command_cache.v</code> 是 command_ctl 的入口 FIFO。它的作用不是构造 NVMe 命令，而是先把上游输入的字段稳定缓存下来，避免后级 <code>command_construct</code> 或队列 backpressure 时丢命令。</p>
+<p>源码中 FIFO 宽度为 266 bit：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> FIFO_DEPTH = <span class="number">16</span>;</span><br><span class="line"><span class="keyword">localparam</span> FIFO_WIDTH = <span class="number">266</span>;</span><br></pre></td></tr></table></figure>
+
+<p>其中 264 bit 是命令内容，2 bit 是 command type：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> command_cache_current = &#123;</span><br><span class="line">    i_opcode,</span><br><span class="line">    i_nsid,</span><br><span class="line">    i_prp1,</span><br><span class="line">    i_prp2,</span><br><span class="line">    i_lba,</span><br><span class="line">    i_length,</span><br><span class="line">    i_id</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> command_type_current = i_command_type;</span><br></pre></td></tr></table></figure>
+
+<p>写入 FIFO 的数据为：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">fifo_mem[wr_ptr] &lt;= &#123;command_cache_current, command_type_current&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>输出时再拆成：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">263</span>:<span class="number">0</span>] fifo_dout_command = fifo_dout_word[FIFO_WIDTH-<span class="number">1</span>:<span class="number">2</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">1</span>:<span class="number">0</span>]   fifo_dout_type    = fifo_dout_word[<span class="number">1</span>:<span class="number">0</span>];</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> o_command_cache      = fifo_dout_command;</span><br><span class="line"><span class="keyword">assign</span> o_command_type       = fifo_dout_type;</span><br><span class="line"><span class="keyword">assign</span> o_nvme_command_valid = fifo_valid;</span><br></pre></td></tr></table></figure>
+
+<p>握手关系是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> fifo_rd_en    = fifo_valid &amp;&amp; o_ready;</span><br><span class="line"><span class="keyword">wire</span> fifo_wr_ready = (fifo_count &lt; FIFO_DEPTH) || fifo_rd_en;</span><br><span class="line"><span class="keyword">wire</span> fifo_wr_en    = i_valid &amp;&amp; fifo_wr_ready;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> i_ready = fifo_wr_ready;</span><br></pre></td></tr></table></figure>
+
+<p>也就是说，只要 FIFO 没满，<code>i_ready</code> 就可以接收上游命令。如果 FIFO 满了，但同周期后级读走一个 entry，也允许写入。这种写读同周期透传可以减少入口 backpressure。</p>
+<p>这一层的意义是：Command 模块入口具备短暂吸收能力。即使后面 Admin SQ &#x2F; IO SQ 暂时没有 ready，上游也不必立刻停止，只要 FIFO 还有空间即可。</p>
+<h2 id="6-5-CID-池-command-id-pool"><a href="#6-5-CID-池-command-id-pool" class="headerlink" title="6.5 CID 池 command_id_pool"></a>6.5 CID 池 command_id_pool</h2><p><code>command_id_pool.v</code> 维护一组可用 CID。CID 的职责是给 NVMe command 一个唯一编号，后续 CQE 回来时 SSD 会带回该 CID，FPGA 再用它查 command_record。</p>
+<p>当前参数为：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">parameter</span> ID_WIDTH = <span class="number">16</span>;</span><br><span class="line"><span class="keyword">parameter</span> ID_COUNT = <span class="number">512</span>;</span><br><span class="line"><span class="keyword">parameter</span> RESERVE_CID_ZERO = <span class="number">0</span>;</span><br></pre></td></tr></table></figure>
+
+<p>当前实现中 <code>RESERVE_CID_ZERO</code> 参数还没有实际参与初始化逻辑，因此 CID 是从 0 开始分配的。复位后状态机进入 <code>INIT_FIFO</code>，将 <code>0 ~ ID_COUNT-1</code> 写入 FIFO：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> ID_TOTAL = ID_COUNT - <span class="number">1</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> init_fifo_fire = (state_fifo_reg == INIT_FIFO) &amp;&amp; fifo_wr_ready;</span><br><span class="line"></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> sys_clk <span class="keyword">or</span> <span class="keyword">negedge</span> sys_rst_n) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (!sys_rst_n)</span><br><span class="line">        id_fifo_init_cnt &lt;= &#123;ID_LENGTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (state_fifo_reg == IDLE_FIFO)</span><br><span class="line">        id_fifo_init_cnt &lt;= &#123;ID_LENGTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line">    <span class="keyword">else</span> <span class="keyword">if</span> (init_fifo_fire &amp;&amp; id_fifo_init_cnt != ID_TOTAL)</span><br><span class="line">        id_fifo_init_cnt &lt;= id_fifo_init_cnt + <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>初始化结束后，<code>id_data_ready</code> 表示 FIFO 里有可用 CID：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> id_data_ready = init_done_reg &amp;&amp; !empty;</span><br><span class="line"><span class="keyword">assign</span> id_data       = fifo_dout;</span><br><span class="line"><span class="keyword">assign</span> id_data_valid = fifo_valid;</span><br></pre></td></tr></table></figure>
+
+<p>外部请求 CID 的读逻辑是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (state_fifo_reg == DONE_FIFO &amp;&amp; !empty &amp;&amp; id_requst &amp;&amp; !rd_en_reg) <span class="keyword">begin</span></span><br><span class="line">    rd_en_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>CID 回收来自 <code>command_ctl.v</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> id_pool_release_valid = record_release_valid ||</span><br><span class="line">                               illegal_release_pending_valid ||</span><br><span class="line">                               construct_illegal_cmd_valid;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> id_pool_release_cid = record_release_valid ? record_release_cid :</span><br><span class="line">                             illegal_release_pending_valid ? illegal_release_pending_cid :</span><br><span class="line">                             construct_illegal_cmd_cid;</span><br></pre></td></tr></table></figure>
+
+<p>这里包含两种回收来源：</p>
+<table>
+<thead>
+<tr>
+<th>回收来源</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>record_release_valid</code></td>
+<td>正常 completion 匹配成功，或 late completion 后安全释放</td>
+</tr>
+<tr>
+<td><code>construct_illegal_cmd_valid</code></td>
+<td>命令构造阶段发现非法命令，该 CID 没有真正进入 SQ，可以直接归还</td>
+</tr>
+</tbody></table>
+<p>设计上选择 FIFO 做 CID 池是合理的。CID 池只需要“拿一个空闲 ID”和“归还一个 ID”，不需要按 CID 随机查询。真正需要随机查表的命令上下文放在 <code>command_record.v</code> 中。</p>
+<h2 id="6-6-NVMe-SQE-构造-command-construct"><a href="#6-6-NVMe-SQE-构造-command-construct" class="headerlink" title="6.6 NVMe SQE 构造 command_construct"></a>6.6 NVMe SQE 构造 command_construct</h2><p><code>command_construct.v</code> 的职责是把缓存字段转换成 512-bit NVMe Submission Queue Entry。它内部是一个小状态机：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">3</span>:<span class="number">0</span>] IDLE    = <span class="number">4&#x27;d0</span>,</span><br><span class="line">                 GET_CMD = <span class="number">4&#x27;d1</span>,</span><br><span class="line">                 SQ_SEL  = <span class="number">4&#x27;d2</span>,</span><br><span class="line">                 SQ_WR   = <span class="number">4&#x27;d3</span>;</span><br></pre></td></tr></table></figure>
+
+<p>四个状态的含义是：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>IDLE</code></td>
+<td>等待 <code>command_cache</code> 里出现有效命令</td>
+</tr>
+<tr>
+<td><code>GET_CMD</code></td>
+<td>拉高 <code>o_ready</code>，从 command_cache 取出一个 entry</td>
+</tr>
+<tr>
+<td><code>SQ_SEL</code></td>
+<td>根据 <code>command_type</code> 和 <code>opcode</code> 判断是否合法，并选择 Admin SQ 或 IO SQ</td>
+</tr>
+<tr>
+<td><code>SQ_WR</code></td>
+<td>对目标 SQ 输出 <code>*_nvme_command_valid</code>，直到对方 ready</td>
+</tr>
+</tbody></table>
+<p><code>GET_CMD</code> 阶段会把 264-bit cache 拆成“命令字段”和 CID：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (o_nvme_command_valid &amp;&amp; o_ready) <span class="keyword">begin</span></span><br><span class="line">    state_next = SQ_SEL;</span><br><span class="line">    command_cache_next =  o_command_cache[<span class="number">263</span>:<span class="number">16</span>];</span><br><span class="line">    id_data_next       =  o_command_cache[<span class="number">15</span>:<span class="number">0</span>];</span><br><span class="line">    command_type_next  =  o_command_type;</span><br><span class="line">    ready_next = <span class="number">&#x27;d0</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>进入构造阶段后，字段切片如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">7</span>:<span class="number">0</span>]  i_opcode  = command_cache_reg[<span class="number">247</span> : <span class="number">240</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] i_nsid    = command_cache_reg[<span class="number">239</span> : <span class="number">208</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] i_prp1    = command_cache_reg[<span class="number">207</span> : <span class="number">144</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] i_prp2    = command_cache_reg[<span class="number">143</span> : <span class="number">80</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] i_lba     = command_cache_reg[<span class="number">79</span> : <span class="number">16</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] i_length  = command_cache_reg[<span class="number">15</span> : <span class="number">0</span>];</span><br></pre></td></tr></table></figure>
+
+<p>NVMe SQE 的 DW0 由 opcode、FUSE、PSDT 和 CID 组成：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] dw0 = &#123;</span><br><span class="line">    id_data_reg,    <span class="comment">// [31:16] Command Identifier</span></span><br><span class="line">    psdt_const,     <span class="comment">// [15:14] PSDT = 00b, PRP</span></span><br><span class="line">    <span class="number">4&#x27;b0000</span>,        <span class="comment">// [13:10] Reserved</span></span><br><span class="line">    fuse_const,     <span class="comment">// [9:8]   FUSE = Normal</span></span><br><span class="line">    i_opcode        <span class="comment">// [7:0]   Opcode</span></span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>PRP 地址被放到 DW6~DW9：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] dw6 = i_prp1[<span class="number">31</span>: <span class="number">0</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] dw7 = i_prp1[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] dw8 = i_prp2[<span class="number">31</span>: <span class="number">0</span>];</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] dw9 = i_prp2[<span class="number">63</span>:<span class="number">32</span>];</span><br></pre></td></tr></table></figure>
+
+<p>对于 IO Read&#x2F;Write，<code>i_lba</code> 对应 SLBA，<code>i_length</code> 对应 NLB：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">CMD_TYPE_IO: <span class="keyword">begin</span></span><br><span class="line">    dw1 = i_nsid;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">case</span> (i_opcode)</span><br><span class="line">        IO_WRITE,</span><br><span class="line">        IO_READ: <span class="keyword">begin</span></span><br><span class="line">            cmd_legal = <span class="number">1&#x27;b1</span>;</span><br><span class="line">            dw10 = i_lba[<span class="number">31</span>:<span class="number">0</span>];</span><br><span class="line">            dw11 = i_lba[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line">            dw12 = &#123;<span class="number">16&#x27;d0</span>, i_length&#125;; <span class="comment">// NLB 使用 zero-based 编码</span></span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">endcase</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>对于 Admin Create IO CQ&#x2F;SQ，当前代码复用 <code>i_lba</code> 这个输入字段承载 Admin command 的 CDW10&#x2F;CDW11：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">CMD_TYPE_ADMIN: <span class="keyword">begin</span></span><br><span class="line">    dw1 = <span class="number">32&#x27;d0</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">case</span> (i_opcode)</span><br><span class="line">        ADMIN_CREATE_IO_CQ,</span><br><span class="line">        ADMIN_CREATE_IO_SQ: <span class="keyword">begin</span></span><br><span class="line">            cmd_legal = <span class="number">1&#x27;b1</span>;</span><br><span class="line">            dw10 = i_lba[<span class="number">31</span>:<span class="number">0</span>];</span><br><span class="line">            dw11 = i_lba[<span class="number">63</span>:<span class="number">32</span>];</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">endcase</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这一点在读源码时要特别注意：Admin path 里的 <code>i_lba</code> 不是 SSD LBA，而是上游 <code>ADMIN_queue_init</code> 预先打包好的 CDW10&#x2F;CDW11 内容。也就是说，字段名沿用了 IO 命令语义，但在 Admin 命令里它是“命令参数载体”。</p>
+<p>最终 512-bit SQE 的拼接方式为：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> nvme_command_cons = &#123;</span><br><span class="line">    dw15,dw14,dw13,dw12,</span><br><span class="line">    dw11,dw10,dw9,dw8,</span><br><span class="line">    dw7,dw6,dw5,dw4,</span><br><span class="line">    dw3,dw2,dw1,dw0</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>这样 DW0 位于 <code>nvme_command_cons[31:0]</code>，DW15 位于最高 32 bit，符合当前队列模块按低地址写 DW0 的使用方式。</p>
+<p>分流逻辑在 <code>SQ_SEL</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (!cmd_legal) <span class="keyword">begin</span></span><br><span class="line">    state_next = o_nvme_command_valid ? GET_CMD : IDLE;</span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (command_type_reg == CMD_TYPE_ADMIN) <span class="keyword">begin</span></span><br><span class="line">    admin_nvme_command_next = nvme_command_cons;</span><br><span class="line">    admin_command_done_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    state_next = SQ_WR;</span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (command_type_reg == CMD_TYPE_IO) <span class="keyword">begin</span></span><br><span class="line">    io_nvme_command_next = nvme_command_cons;</span><br><span class="line">    io_command_done_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    state_next = SQ_WR;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p><code>SQ_WR</code> 中 valid 会保持到对端 ready：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (io_command_done_reg) <span class="keyword">begin</span></span><br><span class="line">    io_nvme_command_valid_next = <span class="number">1&#x27;d1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (io_nvme_command_ready &amp;&amp; io_nvme_command_valid_reg) <span class="keyword">begin</span></span><br><span class="line">    io_command_done_next = <span class="number">&#x27;d0</span>;</span><br><span class="line">    io_nvme_command_valid_next = <span class="number">1&#x27;d0</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这说明命令不是组合地一拍扔给队列，而是具有完整 ready&#x2F;valid 握手。队列模块 backpressure 时，SQE 会保持在寄存器中，直到写入成功。</p>
+<h2 id="6-7-命令真正下发与-record-issue"><a href="#6-7-命令真正下发与-record-issue" class="headerlink" title="6.7 命令真正下发与 record issue"></a>6.7 命令真正下发与 record issue</h2><p>Command record 不能在入口 <code>i_valid &amp;&amp; i_ready</code> 时就记录命令，因为那时命令只是进入了 command_cache，还没有真正写入 SQ。正确的记录点应该是 SQE 被队列接收，也就是 Admin 或 IO 命令输出通道 ready&#x2F;valid 成功。</p>
+<p><code>command_ctl.v</code> 中正是这样做的：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> admin_issue_valid = admin_nvme_command_valid &amp;&amp; admin_nvme_command_ready;</span><br><span class="line"><span class="keyword">wire</span> io_issue_valid    = io_nvme_command_valid    &amp;&amp; io_nvme_command_ready;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> record_issue_valid = admin_issue_valid || io_issue_valid;</span><br></pre></td></tr></table></figure>
+
+<p>CID 从 SQE 的 DW0 中取出：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] record_issue_cid =</span><br><span class="line">    admin_issue_valid ? admin_nvme_command_data[<span class="number">31</span>:<span class="number">16</span>] :</span><br><span class="line">                        io_nvme_command_data[<span class="number">31</span>:<span class="number">16</span>];</span><br></pre></td></tr></table></figure>
+
+<p>queue_id 的来源根据命令类型不同：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] record_issue_queue_id =</span><br><span class="line">    admin_issue_valid ? QUEUE_ID_ADMIN : io_issue_queue_id;</span><br></pre></td></tr></table></figure>
+
+<p>Admin queue 固定使用 queue 0；IO queue 则由 <code>io_issue_queue_id</code> 给出。这个 <code>io_issue_queue_id</code> 来自后级 queue dispatch 结果，表示该 IO SQE 实际写入了哪一个 IO SQ。</p>
+<p>opcode 同样从 DW0 低 8 bit 取出：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">7</span>:<span class="number">0</span>] record_issue_opcode =</span><br><span class="line">    admin_issue_valid ? admin_nvme_command_data[<span class="number">7</span>:<span class="number">0</span>] :</span><br><span class="line">                        io_nvme_command_data[<span class="number">7</span>:<span class="number">0</span>];</span><br></pre></td></tr></table></figure>
+
+<p>然后这些信息进入 <code>command_record</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.issue_valid</span>        (record_issue_valid),</span><br><span class="line"><span class="variable">.issue_cid</span>          (record_issue_cid),</span><br><span class="line"><span class="variable">.issue_queue_id</span>     (record_issue_queue_id),</span><br><span class="line"><span class="variable">.issue_command_type</span> (record_issue_type),</span><br><span class="line"><span class="variable">.issue_opcode</span>       (record_issue_opcode),</span><br><span class="line"><span class="variable">.issue_context</span>      (&#123;RECORD_CONTEXT_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;),</span><br></pre></td></tr></table></figure>
+
+<p>这一段是整个 Command 模块正确性的关键。只有在 SQE 被队列接受后才记录 active command，才能保证后续 completion 查表不会出现“命令还没进 SQ，但 record 已经 active”的假状态。</p>
+<h2 id="6-8-completion-汇聚-command-record-round-robin"><a href="#6-8-completion-汇聚-command-record-round-robin" class="headerlink" title="6.8 completion 汇聚 command_record_round_robin"></a>6.8 completion 汇聚 command_record_round_robin</h2><p>当前设计面向 1 条 Admin CQ 和最多 16 条 IO CQ，所以 completion 输入总端口数为：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">parameter</span> RECORD_PORTS = <span class="number">17</span>;</span><br></pre></td></tr></table></figure>
+
+<p>在 <code>command_ctl.v</code> 中，completion 输入被整理成统一总线：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">cpl_in_valid[<span class="number">0</span>] = admin_id_valid;</span><br><span class="line">cpl_in_cid[<span class="number">0</span>*ID_WIDTH +: ID_WIDTH] = admin_id_data;</span><br><span class="line">cpl_in_queue_id[<span class="number">0</span>*QUEUE_ID_WIDTH +: QUEUE_ID_WIDTH] = QUEUE_ID_ADMIN;</span><br><span class="line">cpl_in_status_ok[<span class="number">0</span>] = admin_cpl_status_ok;</span><br><span class="line"></span><br><span class="line"><span class="keyword">for</span> (cpl_port = <span class="number">0</span>; cpl_port &lt; RECORD_PORTS-<span class="number">1</span>; cpl_port = cpl_port + <span class="number">1</span>) <span class="keyword">begin</span></span><br><span class="line">    cpl_in_valid[cpl_port+<span class="number">1</span>] = io_cpl_valid_bus[cpl_port];</span><br><span class="line">    cpl_in_cid[(cpl_port+<span class="number">1</span>)*ID_WIDTH +: ID_WIDTH] =</span><br><span class="line">        io_cpl_cid_bus[cpl_port*ID_WIDTH +: ID_WIDTH];</span><br><span class="line">    cpl_in_queue_id[(cpl_port+<span class="number">1</span>)*QUEUE_ID_WIDTH +: QUEUE_ID_WIDTH] =</span><br><span class="line">        io_cpl_queue_id_bus[cpl_port*QUEUE_ID_WIDTH +: QUEUE_ID_WIDTH];</span><br><span class="line">    cpl_in_status_ok[cpl_port+<span class="number">1</span>] = io_cpl_status_ok_bus[cpl_port];</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>端口 0 是 Admin completion，端口 1~16 是 IO completion。后面还有一段兼容旧接口的逻辑：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (io_id_valid) <span class="keyword">begin</span></span><br><span class="line">    cpl_in_valid[<span class="number">1</span>] = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    cpl_in_cid[<span class="number">1</span>*ID_WIDTH +: ID_WIDTH] = io_id_data;</span><br><span class="line">    cpl_in_queue_id[<span class="number">1</span>*QUEUE_ID_WIDTH +: QUEUE_ID_WIDTH] = io_cpl_queue_id;</span><br><span class="line">    cpl_in_status_ok[<span class="number">1</span>] = io_cpl_status_ok;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这表示旧的单 IO completion 输入会映射到 IO queue 0 对应的 port 1。集成 16 队列后，主路径更应该使用 <code>io_cpl_valid_bus/io_cpl_cid_bus/io_cpl_queue_id_bus</code>，避免同周期旧接口和 bus[0] 同时有效时互相覆盖。</p>
+<p><code>command_record_round_robin.v</code> 内部不是直接用组合仲裁吃所有 completion，而是每个输入端口前面都有一个小 FIFO：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">generate</span></span><br><span class="line">    <span class="keyword">for</span> (n = <span class="number">0</span>; n &lt; PORTS; n = n + <span class="number">1</span>) <span class="keyword">begin</span> : fifo_gen</span><br><span class="line">        command_record_event_fifo #(</span><br><span class="line">            <span class="variable">.WIDTH</span> (EVENT_WIDTH),</span><br><span class="line">            <span class="variable">.DEPTH</span> (FIFO_DEPTH)</span><br><span class="line">        ) cpl_event_fifo (...);</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">endgenerate</span></span><br></pre></td></tr></table></figure>
+
+<p>每个 FIFO 存的 event 为：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> fifo_din = &#123;</span><br><span class="line">    cpl_in_status_ok[n],</span><br><span class="line">    cpl_in_queue_id[n*QUEUE_ID_WIDTH +: QUEUE_ID_WIDTH],</span><br><span class="line">    cpl_in_cid[n*ID_WIDTH +: ID_WIDTH]</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>然后用现有 <code>arbiter</code> 做 round-robin：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">arbiter #(</span><br><span class="line">    <span class="variable">.PORTS</span>                (PORTS),</span><br><span class="line">    <span class="variable">.ARB_TYPE_ROUND_ROBIN</span> (<span class="number">1</span>),</span><br><span class="line">    <span class="variable">.ARB_LSB_HIGH_PRIORITY</span>(<span class="number">1</span>)</span><br><span class="line">) cpl_arbiter (...);</span><br></pre></td></tr></table></figure>
+
+<p>最终输出一路 completion 给 <code>command_record</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> cpl_out_valid     = arb_grant_valid &amp;&amp; selected_fifo_valid;</span><br><span class="line"><span class="keyword">assign</span> cpl_out_cid       = selected_event[ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>];</span><br><span class="line"><span class="keyword">assign</span> cpl_out_queue_id  = selected_event[ID_WIDTH +: QUEUE_ID_WIDTH];</span><br><span class="line"><span class="keyword">assign</span> cpl_out_status_ok = selected_event[ID_WIDTH+QUEUE_ID_WIDTH];</span><br></pre></td></tr></table></figure>
+
+<p>这种结构的好处是：如果多个 CQ 同一拍都有 completion，先进入各自 FIFO，再由 RR 逐个送给 record，不会因为 command_record 一拍只能处理一个 completion 而丢事件。</p>
+<h2 id="6-9-命令记录表-command-record"><a href="#6-9-命令记录表-command-record" class="headerlink" title="6.9 命令记录表 command_record"></a>6.9 命令记录表 command_record</h2><p><code>command_record.v</code> 是 Command 模块最核心的状态表。它以 CID 为索引，保存每条命令的上下文：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">reg</span> [<span class="number">1</span>:<span class="number">0</span>]                record_state_mem       [<span class="number">0</span>:ID_DEPTH-<span class="number">1</span>];</span><br><span class="line"><span class="keyword">reg</span> [QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] record_queue_id_mem    [<span class="number">0</span>:ID_DEPTH-<span class="number">1</span>];</span><br><span class="line"><span class="keyword">reg</span> [<span class="number">1</span>:<span class="number">0</span>]                record_command_type_mem[<span class="number">0</span>:ID_DEPTH-<span class="number">1</span>];</span><br><span class="line"><span class="keyword">reg</span> [<span class="number">7</span>:<span class="number">0</span>]                record_opcode_mem      [<span class="number">0</span>:ID_DEPTH-<span class="number">1</span>];</span><br><span class="line"><span class="keyword">reg</span> [TIMER_WIDTH-<span class="number">1</span>:<span class="number">0</span>]    record_issue_time_mem  [<span class="number">0</span>:ID_DEPTH-<span class="number">1</span>];</span><br><span class="line"><span class="keyword">reg</span> [CONTEXT_WIDTH-<span class="number">1</span>:<span class="number">0</span>]  record_context_mem     [<span class="number">0</span>:ID_DEPTH-<span class="number">1</span>];</span><br></pre></td></tr></table></figure>
+
+<p>状态定义为：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] REC_FREE    = <span class="number">2&#x27;d0</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] REC_ACTIVE  = <span class="number">2&#x27;d1</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] REC_TIMEOUT = <span class="number">2&#x27;d2</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] REC_ABORT   = <span class="number">2&#x27;d3</span>;</span><br></pre></td></tr></table></figure>
+
+<p>命令真正下发时，如果该 CID 当前空闲，就写入 active 记录：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (issue_valid) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (record_state_mem[issue_addr] != REC_FREE) <span class="keyword">begin</span></span><br><span class="line">        issue_conflict &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">        record_state_mem[issue_addr]        &lt;= REC_ACTIVE;</span><br><span class="line">        record_queue_id_mem[issue_addr]     &lt;= issue_queue_id;</span><br><span class="line">        record_command_type_mem[issue_addr] &lt;= issue_command_type;</span><br><span class="line">        record_opcode_mem[issue_addr]       &lt;= issue_opcode;</span><br><span class="line">        record_issue_time_mem[issue_addr]   &lt;= timer_reg;</span><br><span class="line">        record_context_mem[issue_addr]      &lt;= issue_context;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>completion 返回时，用 CID 查表：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [ID_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>] cpl_addr = cpl_cid[ID_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>];</span><br></pre></td></tr></table></figure>
+
+<p>如果状态是 <code>REC_ACTIVE</code>，并且 queue_id 匹配，则输出 done，释放 CID，并把状态改回 <code>REC_FREE</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">REC_ACTIVE: <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (record_queue_id_mem[cpl_addr] == cpl_queue_id) <span class="keyword">begin</span></span><br><span class="line">        done_valid        &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        done_cid          &lt;= cpl_cid;</span><br><span class="line">        done_queue_id     &lt;= record_queue_id_mem[cpl_addr];</span><br><span class="line">        done_command_type &lt;= record_command_type_mem[cpl_addr];</span><br><span class="line">        done_opcode       &lt;= record_opcode_mem[cpl_addr];</span><br><span class="line">        done_context      &lt;= record_context_mem[cpl_addr];</span><br><span class="line">        done_status_ok    &lt;= cpl_status_ok;</span><br><span class="line"></span><br><span class="line">        release_valid &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        release_cid   &lt;= cpl_cid;</span><br><span class="line"></span><br><span class="line">        record_state_mem[cpl_addr] &lt;= REC_FREE;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">        queue_mismatch &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>如果 CID 查不到 active&#x2F;timeout 状态，则认为是 lookup miss：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">default</span>: <span class="keyword">begin</span></span><br><span class="line">    lookup_miss &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这一层把乱序 completion 处理清楚了：无论 SSD 先完成哪条命令，只要 CQE 里带回正确 CID，record 就能直接定位对应命令，而不是依赖完成顺序。</p>
+<h2 id="6-10-done-信号与初始化流程的关系"><a href="#6-10-done-信号与初始化流程的关系" class="headerlink" title="6.10 done 信号与初始化流程的关系"></a>6.10 done 信号与初始化流程的关系</h2><p><code>command_ctl.v</code> 会把 <code>command_record</code> 输出的 done 进一步转换成项目里的阶段性 done 信号：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> admin_cq_done_pulse =</span><br><span class="line">    record_done_valid &amp;&amp; record_done_status_ok &amp;&amp;</span><br><span class="line">    record_done_queue_id == QUEUE_ID_ADMIN &amp;&amp;</span><br><span class="line">    record_done_opcode == ADMIN_CREATE_IO_CQ;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> nvme_queue_done_pulse =</span><br><span class="line">    record_done_valid &amp;&amp; record_done_status_ok &amp;&amp;</span><br><span class="line">    record_done_queue_id == QUEUE_ID_ADMIN &amp;&amp;</span><br><span class="line">    record_done_opcode == ADMIN_CREATE_IO_SQ;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> io_wr_done_pulse =</span><br><span class="line">    record_done_valid &amp;&amp; record_done_status_ok &amp;&amp;</span><br><span class="line">    record_done_command_type == CMD_TYPE_IO &amp;&amp;</span><br><span class="line">    record_done_opcode == IO_WRITE;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> io_rd_done_pulse =</span><br><span class="line">    record_done_valid &amp;&amp; record_done_status_ok &amp;&amp;</span><br><span class="line">    record_done_command_type == CMD_TYPE_IO &amp;&amp;</span><br><span class="line">    record_done_opcode == IO_READ;</span><br></pre></td></tr></table></figure>
+
+<p>对应的电平保持型 done 在时序 always 中置位：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (record_done_valid &amp;&amp; record_done_status_ok) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (record_done_queue_id == QUEUE_ID_ADMIN &amp;&amp;</span><br><span class="line">        record_done_opcode == ADMIN_CREATE_IO_CQ)</span><br><span class="line">        admin_cq_done_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (record_done_queue_id == QUEUE_ID_ADMIN &amp;&amp;</span><br><span class="line">        record_done_opcode == ADMIN_CREATE_IO_SQ)</span><br><span class="line">        nvme_queue_done_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (record_done_command_type == CMD_TYPE_IO &amp;&amp;</span><br><span class="line">        record_done_opcode == IO_WRITE)</span><br><span class="line">        io_wr_done_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (record_done_command_type == CMD_TYPE_IO &amp;&amp;</span><br><span class="line">        record_done_opcode == IO_READ)</span><br><span class="line">        io_rd_done_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这几个信号在系统中的作用不同：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>类型</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>admin_cq_done_pulse</code></td>
+<td>单拍脉冲</td>
+<td>Create IO CQ 成功返回的瞬时事件</td>
+</tr>
+<tr>
+<td><code>nvme_queue_done_pulse</code></td>
+<td>单拍脉冲</td>
+<td>Create IO SQ 成功返回的瞬时事件</td>
+</tr>
+<tr>
+<td><code>io_wr_done_pulse</code></td>
+<td>单拍脉冲</td>
+<td>一条 IO Write 命令完成</td>
+</tr>
+<tr>
+<td><code>io_rd_done_pulse</code></td>
+<td>单拍脉冲</td>
+<td>一条 IO Read 命令完成</td>
+</tr>
+<tr>
+<td><code>admin_cq_done</code></td>
+<td>sticky 电平</td>
+<td>初始化状态机可用来判断 IO CQ 是否已建立</td>
+</tr>
+<tr>
+<td><code>nvme_queue_done</code></td>
+<td>sticky 电平</td>
+<td>初始化状态机可用来判断 IO SQ 是否已建立</td>
+</tr>
+<tr>
+<td><code>io_wr_done</code> &#x2F; <code>io_rd_done</code></td>
+<td>sticky 电平</td>
+<td>测试状态机或 AXI-Lite 状态寄存器可回读</td>
+</tr>
+</tbody></table>
+<p><code>nvme_command_ctl.v</code> 中的初始化命令源依赖这些 done 推进：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> io_cq_init_done;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> nvme_queue_done;</span><br><span class="line"></span><br><span class="line">ADMIN_queue_init u_ADMIN_queue_init(</span><br><span class="line">    <span class="variable">.io_cq_init_done</span>      (io_cq_init_done),</span><br><span class="line">    <span class="variable">.nvme_queue_done</span>      (nvme_queue_done),</span><br><span class="line">    <span class="variable">.admin_queue_init_done</span>(admin_queue_init_done)</span><br><span class="line">);</span><br></pre></td></tr></table></figure>
+
+<p>因此 Command 模块的 done 信号不只是调试输出，它直接参与“队列是否初始化完成”的控制闭环。</p>
+<h2 id="6-11-错误处理-command-error-ctl"><a href="#6-11-错误处理-command-error-ctl" class="headerlink" title="6.11 错误处理 command_error_ctl"></a>6.11 错误处理 command_error_ctl</h2><p><code>command_error_ctl.v</code> 负责把 command_record 和 command_construct 产生的异常转换成 sticky error、计数器和恢复请求。</p>
+<p>它的输入来源可以分成几类：</p>
+<table>
+<thead>
+<tr>
+<th>来源</th>
+<th>信号</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>command_record</code></td>
+<td><code>timeout_valid</code></td>
+<td>active command 超时</td>
+</tr>
+<tr>
+<td><code>command_record</code></td>
+<td><code>late_cpl_valid</code></td>
+<td>timeout 之后 completion 又回来</td>
+</tr>
+<tr>
+<td><code>command_record</code></td>
+<td><code>issue_conflict</code></td>
+<td>试图 issue 一个已占用 CID</td>
+</tr>
+<tr>
+<td><code>command_record</code></td>
+<td><code>lookup_miss</code></td>
+<td>completion CID 查不到有效记录</td>
+</tr>
+<tr>
+<td><code>command_record</code></td>
+<td><code>queue_mismatch</code></td>
+<td>CQE 的 queue_id 和 record 不一致</td>
+</tr>
+<tr>
+<td><code>command_record</code></td>
+<td><code>done_valid &amp;&amp; !done_status_ok</code></td>
+<td>CQE status 非成功</td>
+</tr>
+<tr>
+<td><code>command_construct</code></td>
+<td><code>illegal_cmd_valid</code></td>
+<td>command_type&#x2F;opcode 不支持</td>
+</tr>
+<tr>
+<td><code>command_record_round_robin</code></td>
+<td><code>cpl_fifo_overflow</code></td>
+<td>completion 汇聚 FIFO 溢出</td>
+</tr>
+</tbody></table>
+<p><code>command_ctl.v</code> 中的错误码定义为：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ERR_TIMEOUT        = <span class="number">8&#x27;h01</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ERR_STATUS         = <span class="number">8&#x27;h02</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ERR_ILLEGAL        = <span class="number">8&#x27;h03</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ERR_QUEUE_MISMATCH = <span class="number">8&#x27;h04</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ERR_LOOKUP_MISS    = <span class="number">8&#x27;h05</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ERR_ISSUE_CONFLICT = <span class="number">8&#x27;h06</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ERR_LATE_CPL       = <span class="number">8&#x27;h07</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">7</span>:<span class="number">0</span>] ERR_FIFO_OVERFLOW  = <span class="number">8&#x27;h08</span>;</span><br></pre></td></tr></table></figure>
+
+<p>最后错误上下文通过 <code>make_error_context</code> 打包：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">make_error_context[<span class="number">7</span>:<span class="number">0</span>] = error_code;</span><br><span class="line">make_error_context[<span class="number">15</span>:<span class="number">8</span>] = opcode;</span><br><span class="line">make_error_context[<span class="number">17</span>:<span class="number">16</span>] = command_type;</span><br><span class="line">make_error_context[<span class="number">18</span> +: QUEUE_ID_WIDTH] = queue_id;</span><br><span class="line">make_error_context[<span class="number">32</span> +: ID_WIDTH] = cid;</span><br><span class="line">make_error_context[<span class="number">63</span>:<span class="number">48</span>] = detail;</span><br></pre></td></tr></table></figure>
+
+<p>这个 context 后续会被 AXI-Lite status 寄存器或 ILA 使用。它的低 64 bit 可以这样解读：</p>
+<table>
+<thead>
+<tr>
+<th>bit 范围</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>[7:0]</code></td>
+<td>error_code</td>
+</tr>
+<tr>
+<td><code>[15:8]</code></td>
+<td>opcode</td>
+</tr>
+<tr>
+<td><code>[17:16]</code></td>
+<td>command_type</td>
+</tr>
+<tr>
+<td><code>[18 +: QUEUE_ID_WIDTH]</code></td>
+<td>queue_id</td>
+</tr>
+<tr>
+<td><code>[32 +: ID_WIDTH]</code></td>
+<td>cid</td>
+</tr>
+<tr>
+<td><code>[63:48]</code></td>
+<td>detail</td>
+</tr>
+</tbody></table>
+<p><code>command_error_ctl</code> 中使用饱和计数器，避免计数溢出回绕：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">function</span> [ERROR_COUNT_WIDTH-<span class="number">1</span>:<span class="number">0</span>] inc_sat;</span><br><span class="line">    <span class="keyword">input</span> [ERROR_COUNT_WIDTH-<span class="number">1</span>:<span class="number">0</span>] value;</span><br><span class="line">    <span class="keyword">begin</span></span><br><span class="line">        <span class="keyword">if</span> (value == &#123;ERROR_COUNT_WIDTH&#123;<span class="number">1&#x27;b1</span>&#125;&#125;)</span><br><span class="line">            inc_sat = value;</span><br><span class="line">        <span class="keyword">else</span></span><br><span class="line">            inc_sat = value + <span class="number">1&#x27;b1</span>;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">endfunction</span></span><br></pre></td></tr></table></figure>
+
+<p>例如 timeout 到来时：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (timeout_valid) <span class="keyword">begin</span></span><br><span class="line">    command_error &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">    timeout_pulse &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">    timeout_count &lt;= inc_sat(timeout_count);</span><br><span class="line"></span><br><span class="line">    last_timeout_cid          &lt;= timeout_cid;</span><br><span class="line">    last_timeout_queue_id     &lt;= timeout_queue_id;</span><br><span class="line">    last_timeout_command_type &lt;= timeout_command_type;</span><br><span class="line">    last_timeout_opcode       &lt;= timeout_opcode;</span><br><span class="line">    last_timeout_context      &lt;= timeout_context;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这部分把“错误检测”和“恢复动作请求”分开了：Command 模块负责发现并提出 <code>queue_pause_req</code>、<code>queue_reset_req</code>、<code>controller_reset_req</code>，真正执行队列 reset 或控制器 reset 应由更上层模块决定。</p>
+<h2 id="6-12-Watchdog-与超时策略"><a href="#6-12-Watchdog-与超时策略" class="headerlink" title="6.12 Watchdog 与超时策略"></a>6.12 Watchdog 与超时策略</h2><p>Watchdog 的超时检测在 <code>command_record.v</code> 中完成。模块维护一个全局 timer，并每拍扫描一个 CID：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">reg</span> [TIMER_WIDTH-<span class="number">1</span>:<span class="number">0</span>]    timer_reg;</span><br><span class="line"><span class="keyword">reg</span> [ID_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>]  scan_ptr;</span><br><span class="line"></span><br><span class="line"><span class="keyword">always</span> @(<span class="keyword">posedge</span> sys_clk <span class="keyword">or</span> <span class="keyword">negedge</span> sys_rst_n) <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (!sys_rst_n) <span class="keyword">begin</span></span><br><span class="line">        timer_reg &lt;= &#123;TIMER_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line">        scan_ptr  &lt;= &#123;ID_ADDR_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">        timer_reg &lt;= timer_reg + <span class="number">1&#x27;b1</span>;</span><br><span class="line">        scan_ptr  &lt;= scan_ptr + <span class="number">1&#x27;b1</span>;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>当前每拍只扫描一个 CID，所以 <code>ID_DEPTH=512</code> 时，完整扫完一轮需要 512 个时钟周期。这个代价很低，不需要为每条命令单独放一个比较器。</p>
+<p>超时判断使用无符号减法：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [TIMER_WIDTH-<span class="number">1</span>:<span class="number">0</span>] scan_age =</span><br><span class="line">    timer_reg - record_issue_time_mem[scan_ptr];</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> scan_timeout_hit =</span><br><span class="line">    watchdog_enable &amp;&amp;</span><br><span class="line">    timeout_cycles_effective != &#123;TIMER_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125; &amp;&amp;</span><br><span class="line">    record_state_mem[scan_ptr] == REC_ACTIVE &amp;&amp;</span><br><span class="line">    scan_age &gt;= timeout_cycles_effective;</span><br></pre></td></tr></table></figure>
+
+<p>这种写法可以自然处理 timer 回绕。只要设置的 <code>watchdog_timeout_cycles</code> 不超过 timer 计数空间的一半太多，<code>timer_reg - issue_time</code> 的无符号差值就可以正确表达“经过了多少周期”。</p>
+<p>超时发生后，record 不会立刻释放 CID，而是把状态改为 <code>REC_TIMEOUT</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (scan_timeout_hit) <span class="keyword">begin</span></span><br><span class="line">    record_state_mem[scan_ptr] &lt;= REC_TIMEOUT;</span><br><span class="line">    timeout_valid &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">    timeout_cid   &lt;= scan_ptr;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这个策略很重要。因为 SSD 可能只是慢返回，如果 timeout 时立刻释放 CID，后面这个 CID 被新命令复用，旧 completion 再回来时就可能误伤新命令。当前实现选择“timeout 只标记，不立即释放”，等 late completion 回来后才安全释放：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">REC_TIMEOUT: <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (record_queue_id_mem[cpl_addr] == cpl_queue_id) <span class="keyword">begin</span></span><br><span class="line">        late_cpl_valid &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        late_cpl_cid   &lt;= cpl_cid;</span><br><span class="line"></span><br><span class="line">        release_valid &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">        release_cid   &lt;= cpl_cid;</span><br><span class="line"></span><br><span class="line">        record_state_mem[cpl_addr] &lt;= REC_FREE;</span><br><span class="line">    <span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">begin</span></span><br><span class="line">        queue_mismatch &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p><code>command_error_ctl.v</code> 中定义了四种 watchdog policy：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] WD_POLICY_DEFAULT          = <span class="number">2&#x27;d0</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] WD_POLICY_REPORT_ONLY      = <span class="number">2&#x27;d1</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] WD_POLICY_QUEUE_RESET      = <span class="number">2&#x27;d2</span>;</span><br><span class="line"><span class="keyword">localparam</span> [<span class="number">1</span>:<span class="number">0</span>] WD_POLICY_CONTROLLER_RESET = <span class="number">2&#x27;d3</span>;</span><br></pre></td></tr></table></figure>
+
+<p>含义如下：</p>
+<table>
+<thead>
+<tr>
+<th>policy</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0</code> default</td>
+<td>Admin timeout 请求 controller reset；IO timeout 先 pause queue，多次后请求 queue reset</td>
+</tr>
+<tr>
+<td><code>1</code> report only</td>
+<td>只记录错误，不主动提出 reset&#x2F;pause</td>
+</tr>
+<tr>
+<td><code>2</code> queue reset</td>
+<td>IO timeout 直接请求对应 queue pause&#x2F;reset；Admin timeout 仍请求 controller reset</td>
+</tr>
+<tr>
+<td><code>3</code> controller reset</td>
+<td>任意 timeout 都提升为 controller reset 级别</td>
+</tr>
+</tbody></table>
+<p>这个策略比“一条命令超时就全局重启”更细。对于 IO 队列，默认策略先把问题限制在单个 queue 上；对于 Admin queue，因为它关系到控制器管理路径，所以 timeout 会更保守地请求 controller reset。</p>
+<h2 id="6-13-AXI-Lite-状态回读关系"><a href="#6-13-AXI-Lite-状态回读关系" class="headerlink" title="6.13 AXI-Lite 状态回读关系"></a>6.13 AXI-Lite 状态回读关系</h2><p>Command 模块的错误和状态最终接到 AXI-Lite 控制寄存器，便于上板后通过 VIO&#x2F;软件&#x2F;调试逻辑读取。</p>
+<p><code>SSD_ctl.v</code> 中 <code>axi_lite_ctl</code> 会输出 watchdog 配置给 command_ctl：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.command_watchdog_enable</span>         (command_watchdog_enable),</span><br><span class="line"><span class="variable">.command_watchdog_policy</span>         (command_watchdog_policy),</span><br><span class="line"><span class="variable">.command_watchdog_timeout_cycles</span> (command_watchdog_timeout_cycles),</span><br></pre></td></tr></table></figure>
+
+<p><code>command_ctl</code> 再把它们送入 record 和 error_ctl：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.watchdog_enable</span>         (watchdog_enable_safe),</span><br><span class="line"><span class="variable">.watchdog_timeout_cycles</span> (watchdog_timeout_cycles_safe),</span><br><span class="line">...</span><br><span class="line"><span class="variable">.watchdog_policy</span>         (watchdog_policy_safe),</span><br></pre></td></tr></table></figure>
+
+<p>为了避免仿真或未连接状态下 X 态扩散，<code>command_ctl.v</code> 做了 safe 处理：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> watchdog_enable_safe = (watchdog_enable === <span class="number">1&#x27;b1</span>);</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">1</span>:<span class="number">0</span>] watchdog_policy_safe =</span><br><span class="line">    ((^watchdog_policy) === <span class="number">1&#x27;bx</span>) ? <span class="number">2&#x27;d0</span> : watchdog_policy;</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] watchdog_timeout_cycles_safe =</span><br><span class="line">    ((^watchdog_timeout_cycles) === <span class="number">1&#x27;bx</span>) ? COMMAND_TIMEOUT_CYCLES :</span><br><span class="line">                                            watchdog_timeout_cycles;</span><br></pre></td></tr></table></figure>
+
+<p>Command 模块输出的状态包括：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> command_error;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> command_fatal_error;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> command_issue_pause_req;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> command_controller_reset_req;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [RECORD_PORTS-<span class="number">1</span>:<span class="number">0</span>] command_queue_pause_req;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [RECORD_PORTS-<span class="number">1</span>:<span class="number">0</span>] command_queue_reset_req;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> command_last_error_valid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] command_timeout_count;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] command_mismatch_count;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] command_last_error_cid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [QUEUE_ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>] command_last_error_queue_id;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">7</span>:<span class="number">0</span>] command_last_error_opcode;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [RECORD_CONTEXT_WIDTH-<span class="number">1</span>:<span class="number">0</span>] command_last_error_context;</span><br></pre></td></tr></table></figure>
+
+<p><code>nvme_axil_regs.v</code> 中也能看到对应寄存器接入，例如：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">REG_TIMEOUT_COUNT:    read_mux = timeout_count;</span><br><span class="line">REG_MISMATCH_COUNT:   read_mux = mismatch_count;</span><br><span class="line">REG_WATCHDOG_CTRL:    read_mux = &#123;<span class="number">29&#x27;d0</span>, watchdog_policy_reg, watchdog_enable_reg&#125;;</span><br><span class="line">REG_WATCHDOG_TIMEOUT: read_mux = watchdog_timeout_cycles_reg;</span><br><span class="line">REG_WATCHDOG_STATUS:  read_mux = watchdog_status_word;</span><br></pre></td></tr></table></figure>
+
+<p>所以 Command 模块不是一个只有内部状态的黑盒。它把关键错误、最后一次错误 CID、最后一次完成 opcode、timeout&#x2F;mismatch 计数都暴露给控制面，方便上板定位。</p>
+<h2 id="6-14-当前实现需要注意的细节"><a href="#6-14-当前实现需要注意的细节" class="headerlink" title="6.14 当前实现需要注意的细节"></a>6.14 当前实现需要注意的细节</h2><h3 id="6-14-1-CID-0-当前会被使用"><a href="#6-14-1-CID-0-当前会被使用" class="headerlink" title="6.14.1 CID 0 当前会被使用"></a>6.14.1 CID 0 当前会被使用</h3><p><code>command_id_pool.v</code> 有 <code>RESERVE_CID_ZERO</code> 参数，但当前初始化逻辑没有使用它。因此复位后 CID 从 0 开始分配。这和前面验证阶段的设计一致。如果后续希望保留 CID 0 不用，需要补充初始化起点和 ID_TOTAL 逻辑。</p>
+<h3 id="6-14-2-timeout-不立即释放-CID-是正确选择"><a href="#6-14-2-timeout-不立即释放-CID-是正确选择" class="headerlink" title="6.14.2 timeout 不立即释放 CID 是正确选择"></a>6.14.2 timeout 不立即释放 CID 是正确选择</h3><p><code>command_record.v</code> 在 timeout 时只把状态改为 <code>REC_TIMEOUT</code>，不会马上释放 CID。这样可以避免旧 completion 晚回来后和新命令 CID 复用冲突。真正释放发生在 late completion 或上层明确 force release 后。</p>
+<p>当前 <code>command_ctl.v</code> 里 <code>force_release_valid</code> 暂时接 <code>1&#39;b0</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.force_release_valid</span> (<span class="number">1&#x27;b0</span>),</span><br><span class="line"><span class="variable">.force_release_cid</span>   (&#123;ID_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;),</span><br></pre></td></tr></table></figure>
+
+<p>也就是说，本阶段主要依靠 late completion 自然回收。如果未来要做完整 queue reset，需要由恢复模块在确认队列 drain 或 reset 完成后，再通过 force release 释放该 queue 相关 CID。</p>
+<h3 id="6-14-3-completion-汇聚-FIFO-深度不是无限的"><a href="#6-14-3-completion-汇聚-FIFO-深度不是无限的" class="headerlink" title="6.14.3 completion 汇聚 FIFO 深度不是无限的"></a>6.14.3 completion 汇聚 FIFO 深度不是无限的</h3><p><code>command_record_round_robin</code> 每个端口 FIFO 深度为 16：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.FIFO_DEPTH</span>(<span class="number">16</span>)</span><br></pre></td></tr></table></figure>
+
+<p>如果某个 CQ 短时间内 completion 太密集，而 command_record 处理不过来，就可能出现 <code>cpl_fifo_overflow</code>。当前这个异常会进入 <code>ERR_FIFO_OVERFLOW</code>，并被 <code>command_error_ctl</code> 视为高风险错误。</p>
+<h3 id="6-14-4-Admin-path-里的-i-lba-是复用字段"><a href="#6-14-4-Admin-path-里的-i-lba-是复用字段" class="headerlink" title="6.14.4 Admin path 里的 i_lba 是复用字段"></a>6.14.4 Admin path 里的 i_lba 是复用字段</h3><p>在 <code>command_construct.v</code> 里，Admin Create IO CQ&#x2F;SQ 使用 <code>i_lba</code> 填 DW10&#x2F;DW11。这是为了复用统一 command input 接口，不代表 Admin 命令真的有 LBA。看波形时如果看到 Admin 命令的 <code>i_lba</code> 有值，应该按 CDW10&#x2F;CDW11 解释。</p>
+<h3 id="6-14-5-io-id-valid-是兼容旧接口"><a href="#6-14-5-io-id-valid-是兼容旧接口" class="headerlink" title="6.14.5 io_id_valid 是兼容旧接口"></a>6.14.5 <code>io_id_valid</code> 是兼容旧接口</h3><p><code>command_ctl.v</code> 既有新的 16 路 IO completion bus，也保留了旧的单路 <code>io_id_valid/io_id_data/io_cpl_queue_id</code> 输入。旧接口会覆盖 port 1，所以完整 16 queue 集成时应统一使用 bus 接口，旧单路输入保持无效。</p>
+<h3 id="6-14-6-issue-context-当前暂时为-0"><a href="#6-14-6-issue-context-当前暂时为-0" class="headerlink" title="6.14.6 issue_context 当前暂时为 0"></a>6.14.6 issue_context 当前暂时为 0</h3><p><code>command_record</code> 支持 <code>CONTEXT_WIDTH=64</code>，但当前 <code>command_ctl.v</code> 例化时：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.issue_context</span>(&#123;RECORD_CONTEXT_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;)</span><br></pre></td></tr></table></figure>
+
+<p>也就是说 record 表已经预留 context 字段，但当前还没有把 PRP index、AXI command descriptor、请求来源等信息写进去。后续如果要增强 debug，可以把 <code>cmd_source</code>、<code>queue_hint</code>、PRP window id 或 AXI-Lite command seq 放进 context。</p>
+<h2 id="6-15-章节总结"><a href="#6-15-章节总结" class="headerlink" title="6.15 章节总结"></a>6.15 章节总结</h2><p>Command 模块当前已经完成了 NVMe 命令生命周期的主要硬件化：</p>
+<ul>
+<li>用 <code>command_cache</code> 缓存上游命令，吸收后级 backpressure。</li>
+<li>用 <code>command_id_pool</code> 维护全局 CID 池，CID 当前从 0 开始分配。</li>
+<li>用 <code>command_construct</code> 生成 512-bit SQE，并按 Admin&#x2F;IO 分流。</li>
+<li>在 SQE 真正被队列 ready&#x2F;valid 接收时写入 <code>command_record</code>。</li>
+<li>用 <code>command_record_round_robin</code> 汇聚 1 Admin + 16 IO completion。</li>
+<li>用 <code>command_record</code> 按 CID 处理乱序 completion、queue mismatch、lookup miss、late completion 和 timeout。</li>
+<li>用 <code>command_error_ctl</code> 统计错误并产生 pause&#x2F;reset 请求。</li>
+<li>通过 AXI-Lite 暴露 done、last error、timeout count、mismatch count 和 watchdog 配置。</li>
+</ul>
+<p>从系统角度看，Command 模块处在 AXI-Lite&#x2F;初始化命令源和 Queue 模块之间。它向下游提交 SQE，向上游返回命令完成状态，并把 NVMe 的乱序 completion 变成可追踪、可回收、可调试的硬件状态。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-06-command-module/" data-id="cmpfh6i5t0000x0i76nokdo15" data-title="FPGA NVMe Host 项目记录（六）：Command 模块设计" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+  
+    <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">后一篇</strong>
+      <div class="article-nav-title">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">分类</h3>
+    <div class="widget">
+      <ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/">FPGA</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/PCIe/">PCIe</a></li></ul></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Xilinx/" rel="tag">Xilinx</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签云</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 15px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">归档</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/05/">五月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/01/">一月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/09/">九月 2025</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">最新文章</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-06-command-module/">FPGA NVMe Host 项目记录（六）：Command 模块设计</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05-init-queue/">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-04-pcie-tlp-flow/">FPGA NVMe Host 项目记录（四）：PCIe TLP 四通道数据流</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/20/fpga-nvme-host-03-architecture/">FPGA NVMe Host 项目记录（三）：系统总体架构</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      
+      &copy; 2026 LI HUALOU<br>
+      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+
+<script src="/js/jquery-3.6.4.min.js"></script>
+
+
+
+  
+<script src="/fancybox/jquery.fancybox.min.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+
+  </div>
+</body>
+</html>
