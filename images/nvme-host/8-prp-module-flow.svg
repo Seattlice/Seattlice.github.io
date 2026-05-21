@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="650" viewBox="0 0 1180 650" role="img" aria-labelledby="title desc">
+  <title id="title">PRP module flow</title>
+  <desc id="desc">PRP calculation and virtual PRP list completion flow.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 Z" fill="#334155"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif; fill: #0f172a; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #475569; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.4; rx: 8; ry: 8; }
+      .cmd { fill: #eff6ff; }
+      .calc { fill: #fff7ed; }
+      .ctx { fill: #f0fdf4; }
+      .tlp { fill: #f8fafc; }
+      .box-title { font-size: 16px; font-weight: 700; }
+      .small { font-size: 13px; fill: #334155; }
+      .mono { font-family: Consolas, "Microsoft YaHei", monospace; font-size: 12px; fill: #334155; }
+      .lane { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 7 6; }
+      .tag { font-size: 13px; fill: #0369a1; font-weight: 700; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="1180" height="650" fill="#ffffff"/>
+  <text x="44" y="48" class="title">PRP 模块：连续 buffer 到虚拟 PRP List</text>
+  <text x="44" y="75" class="subtitle">当前实现面向 FPGA 内部连续 memory window，按 CID 记录 PRP list 上下文并响应 SSD 的 PRP list MemRd</text>
+
+  <rect x="60" y="130" width="240" height="115" class="box cmd"/>
+  <text x="84" y="163" class="box-title">命令参数</text>
+  <text x="84" y="191" class="mono">opcode / nsid / addr</text>
+  <text x="84" y="216" class="mono">lba / nlb / queue_hint</text>
+
+  <rect x="380" y="130" width="240" height="115" class="box calc"/>
+  <text x="404" y="163" class="box-title">prp_core_calc</text>
+  <text x="404" y="191" class="small">按 page size 计算 PRP1/PRP2</text>
+  <text x="404" y="216" class="small">NLB 按 zero-based 换算字节</text>
+
+  <rect x="700" y="130" width="240" height="115" class="box calc"/>
+  <text x="724" y="163" class="box-title">输出给 command_ctl</text>
+  <text x="724" y="191" class="mono">CID + PRP1 + PRP2</text>
+  <text x="724" y="216" class="small">构造 NVMe SQE</text>
+
+  <rect x="60" y="335" width="240" height="120" class="box ctx"/>
+  <text x="84" y="368" class="box-title">prp_list_ctx</text>
+  <text x="84" y="396" class="mono">CID -> base_page</text>
+  <text x="84" y="421" class="mono">CID -> extra_pages</text>
+  <text x="84" y="446" class="small">只在需要 PRP List 时写入</text>
+
+  <rect x="380" y="335" width="240" height="120" class="box tlp"/>
+  <text x="404" y="368" class="box-title">SSD 读取 PRP List</text>
+  <text x="404" y="396" class="mono">base = 0x9000_0000</text>
+  <text x="404" y="421" class="small">CQ_route 命中 PRP window</text>
+  <text x="404" y="446" class="small">解析 CID / entry_index</text>
+
+  <rect x="700" y="335" width="240" height="120" class="box tlp"/>
+  <text x="724" y="368" class="box-title">prp_cc_tlp</text>
+  <text x="724" y="396" class="small">生成 CplD header</text>
+  <text x="724" y="421" class="small">payload 为 PRP entry</text>
+  <text x="724" y="446" class="small">通过 CC 返回 SSD</text>
+
+  <rect x="960" y="225" width="160" height="125" class="box ctx"/>
+  <text x="982" y="258" class="box-title">16KB 示例</text>
+  <text x="982" y="286" class="mono">4 x 4KB page</text>
+  <text x="982" y="311" class="mono">NLB = 31</text>
+  <text x="982" y="336" class="small">PRP1 + list entries</text>
+
+  <path d="M300 188 C330 188 350 188 378 188" class="lane"/>
+  <path d="M620 188 C650 188 670 188 698 188" class="lane"/>
+  <path d="M500 245 C500 290 180 290 180 333" class="lane"/>
+  <path d="M300 395 C330 395 350 395 378 395" class="lane dash"/>
+  <path d="M620 395 C650 395 670 395 698 395" class="lane"/>
+  <path d="M940 395 C990 395 1040 370 1040 352" class="lane"/>
+  <path d="M820 245 C820 290 820 305 820 333" class="lane dash"/>
+
+  <text x="322" y="171" class="tag">valid/ready</text>
+  <text x="322" y="379" class="tag">CQ MemRd</text>
+  <text x="647" y="379" class="tag">CC CplD</text>
+</svg>

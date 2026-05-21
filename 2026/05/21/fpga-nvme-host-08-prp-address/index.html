@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+  
+  <title>FPGA NVMe Host 项目记录（八）：PRP 地址管理 | LI HUALOU</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta name="description" content="目录 8.1 本章定位 8.2 源码文件对应关系 8.3 PRP 模块总体数据流 8.4 当前有效地址与参数规划 8.5 prp_ctl 顶层职责 8.6 PRP 命令缓存 prp_command_cache 8.7 CID 获取与 PRP 计算 prp_core_calc 8.8 PRP1 &#x2F; PRP2 生成规则 8.9 PRP List 上下文 prp_list_ctx 8.10 S">
+<meta property="og:type" content="article">
+<meta property="og:title" content="FPGA NVMe Host 项目记录（八）：PRP 地址管理">
+<meta property="og:url" content="https://seattlice.github.io/2026/05/21/fpga-nvme-host-08-prp-address/index.html">
+<meta property="og:site_name" content="LI HUALOU">
+<meta property="og:description" content="目录 8.1 本章定位 8.2 源码文件对应关系 8.3 PRP 模块总体数据流 8.4 当前有效地址与参数规划 8.5 prp_ctl 顶层职责 8.6 PRP 命令缓存 prp_command_cache 8.7 CID 获取与 PRP 计算 prp_core_calc 8.8 PRP1 &#x2F; PRP2 生成规则 8.9 PRP List 上下文 prp_list_ctx 8.10 S">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://seattlice.github.io/images/nvme-host/8-prp-module-flow.svg">
+<meta property="article:published_time" content="2026-05-21T13:35:00.000Z">
+<meta property="article:modified_time" content="2026-05-21T13:35:00.000Z">
+<meta property="article:author" content="LI HUALOU">
+<meta property="article:tag" content="NVMe">
+<meta property="article:tag" content="PCIe">
+<meta property="article:tag" content="FPGA">
+<meta property="article:tag" content="RTL">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://seattlice.github.io/images/nvme-host/8-prp-module-flow.svg">
+  
+    <link rel="alternate" href="/atom.xml" title="LI HUALOU" type="application/atom+xml">
+  
+  
+    <link rel="shortcut icon" href="/favicon.png">
+  
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+  
+    
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+
+  
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fork-awesome@1.2.0/css/fork-awesome.min.css">
+
+<meta name="generator" content="Hexo 7.3.0"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">LI HUALOU</a>
+      </h1>
+      
+        <h2 id="subtitle-wrap">
+          <a href="/" id="subtitle">HUALOU</a>
+        </h2>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+        
+          <a class="nav-icon" href="/atom.xml" title="RSS 订阅"><span class="fa fa-rss"></span></a>
+        
+        <a class="nav-icon nav-search-btn" title="搜索"><span class="fa fa-search"></span></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="搜索"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="https://seattlice.github.io"></form>
+      </div>
+    </div>
+  </div>
+</header>
+
+      <div class="outer">
+        <section id="main"><article id="post-fpga-nvme-host-08-prp-address" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
+  <div class="article-meta">
+    <a href="/2026/05/21/fpga-nvme-host-08-prp-address/" class="article-date">
+  <time class="dt-published" datetime="2026-05-21T13:35:00.000Z" itemprop="datePublished">2026-05-21</time>
+</a>
+    
+  <div class="article-category">
+    <a class="article-category-link" href="/categories/FPGA/">FPGA</a>►<a class="article-category-link" href="/categories/FPGA/PCIe/">PCIe</a>
+  </div>
+
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="p-name article-title" itemprop="headline name">
+      FPGA NVMe Host 项目记录（八）：PRP 地址管理
+    </h1>
+  
+
+      </header>
+    
+    <div class="e-content article-entry" itemprop="articleBody">
+      
+        <h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#8.1-%E6%9C%AC%E7%AB%A0%E5%AE%9A%E4%BD%8D">8.1 本章定位</a></li>
+<li><a href="#8.2-%E6%BA%90%E7%A0%81%E6%96%87%E4%BB%B6%E5%AF%B9%E5%BA%94%E5%85%B3%E7%B3%BB">8.2 源码文件对应关系</a></li>
+<li><a href="#8.3-prp-%E6%A8%A1%E5%9D%97%E6%80%BB%E4%BD%93%E6%95%B0%E6%8D%AE%E6%B5%81">8.3 PRP 模块总体数据流</a></li>
+<li><a href="#8.4-%E5%BD%93%E5%89%8D%E6%9C%89%E6%95%88%E5%9C%B0%E5%9D%80%E4%B8%8E%E5%8F%82%E6%95%B0%E8%A7%84%E5%88%92">8.4 当前有效地址与参数规划</a></li>
+<li><a href="#8.5-prp_ctl-%E9%A1%B6%E5%B1%82%E8%81%8C%E8%B4%A3">8.5 prp_ctl 顶层职责</a></li>
+<li><a href="#8.6-prp-%E5%91%BD%E4%BB%A4%E7%BC%93%E5%AD%98-prp_command_cache">8.6 PRP 命令缓存 prp_command_cache</a></li>
+<li><a href="#8.7-cid-%E8%8E%B7%E5%8F%96%E4%B8%8E-prp-%E8%AE%A1%E7%AE%97-prp_core_calc">8.7 CID 获取与 PRP 计算 prp_core_calc</a></li>
+<li><a href="#8.8-prp1-/-prp2-%E7%94%9F%E6%88%90%E8%A7%84%E5%88%99">8.8 PRP1 &#x2F; PRP2 生成规则</a></li>
+<li><a href="#8.9-prp-list-%E4%B8%8A%E4%B8%8B%E6%96%87-prp_list_ctx">8.9 PRP List 上下文 prp_list_ctx</a></li>
+<li><a href="#8.10-ssd-%E8%AF%BB%E5%8F%96-prp-list-%E7%9A%84-cq/cc-%E8%B7%AF%E5%BE%84">8.10 SSD 读取 PRP List 的 CQ&#x2F;CC 路径</a></li>
+<li><a href="#8.11-%E4%B8%8E-cq_route-%E5%92%8C-cc_round_robin-%E7%9A%84%E8%BF%9E%E6%8E%A5">8.11 与 CQ_route 和 CC_round_robin 的连接</a></li>
+<li><a href="#8.12-%E4%B8%8E-command%E3%80%81axi-lite%E3%80%81memory-%E6%A8%A1%E5%9D%97%E7%9A%84%E5%85%B3%E7%B3%BB">8.12 与 Command、AXI-Lite、Memory 模块的关系</a></li>
+<li><a href="#8.13-16kb-%E9%A1%BA%E5%BA%8F%E8%AF%BB%E5%86%99%E7%A4%BA%E4%BE%8B">8.13 16KB 顺序读写示例</a></li>
+<li><a href="#8.14-%E4%BB%BF%E7%9C%9F%E9%AA%8C%E8%AF%81%E8%A6%86%E7%9B%96%E7%82%B9">8.14 仿真验证覆盖点</a></li>
+<li><a href="#8.15-%E5%AE%9E%E7%8E%B0%E6%B3%A8%E6%84%8F%E4%BA%8B%E9%A1%B9">8.15 实现注意事项</a></li>
+<li><a href="#8.16-%E7%AB%A0%E8%8A%82%E6%80%BB%E7%BB%93">8.16 章节总结</a></li>
+</ul>
+<blockquote>
+<p>本章以最新工程 <code>C:\Users\10202\Desktop\Learn\pcie\nvme_host_v2\src</code> 中的 PRP 相关源码为准，主要对应 <code>prp_ctl.v</code>、<code>prp_command_cache.v</code>、<code>prp_core_calc.v</code>、<code>prp_list_ctx.v</code>、<code>prp_cq_tlp.v</code>、<code>prp_cc_tlp.v</code>、<code>CQ_route.v</code>、<code>CC_round_robin.v</code>、<code>SSD_pcie_us.v</code> 和 <code>SSD_ctl.v</code>。</p>
+</blockquote>
+<p><img src="/images/nvme-host/8-prp-module-flow.svg" alt="图 8-1 PRP 模块数据流"></p>
+<h2 id="8-1-本章定位"><a href="#8-1-本章定位" class="headerlink" title="8.1 本章定位"></a>8.1 本章定位</h2><p>PRP 是 NVMe 命令和实际数据 buffer 之间的地址描述层。NVMe SQE 不直接携带大块 payload，SQE 里只放 PRP1、PRP2、SLBA、NLB 等字段。SSD 收到命令以后，再根据 PRP 指向的 host memory 地址，通过 PCIe MemRd 或 MemWr 去读写数据。</p>
+<p>在这个 FPGA NVMe Host 设计中，PRP 模块要解决的是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">外部 AXI/AXI-Lite 给出一条读写命令</span><br><span class="line">-&gt; FPGA 为命令申请 CID</span><br><span class="line">-&gt; 根据 addr/lba/nlb 计算 PRP1/PRP2</span><br><span class="line">-&gt; 必要时建立 PRP List 上下文</span><br><span class="line">-&gt; command_ctl 使用 PRP1/PRP2 构造 SQE</span><br><span class="line">-&gt; SSD 需要 PRP List 时，从 PRP window 发 MemRd</span><br><span class="line">-&gt; FPGA 动态返回 PRP List entry</span><br></pre></td></tr></table></figure>
+
+<p>这里的 PRP 管理不是操作系统里的完整物理页管理。当前工程的数据 buffer 来自 FPGA 内部 AXI RAM 或外侧 AXI4 数据窗口，地址按连续空间规划，因此 PRP List 可以通过公式生成，不需要提前在 DDR 中真实写入一张完整的离散页表。</p>
+<p>这个选择和现在的验证目标是匹配的：先把 FPGA 内部连续 buffer 到 SSD 的顺序读写链路跑通，再保留后续扩展为离散 PRP RAM 的结构位置。</p>
+<h2 id="8-2-源码文件对应关系"><a href="#8-2-源码文件对应关系" class="headerlink" title="8.2 源码文件对应关系"></a>8.2 源码文件对应关系</h2><p>PRP 功能不是一个单独状态机完成的，而是由计算路径和 PRP List 响应路径两部分组成。源码对应关系如下：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>prp_ctl.v</code></td>
+<td>PRP 顶层，封装命令缓存、PRP 计算、PRP List context、PRP List MemRd 解析和 CC completion 返回</td>
+</tr>
+<tr>
+<td><code>prp_command_cache.v</code></td>
+<td>缓存来自 AXI-Lite&#x2F;init&#x2F;test 侧的命令参数，避免上游突发命令直接压住 PRP 计算状态机</td>
+</tr>
+<tr>
+<td><code>prp_core_calc.v</code></td>
+<td>申请 CID，计算 PRP1、PRP2、extra_pages，并把带 PRP 的命令输出给 command_ctl</td>
+</tr>
+<tr>
+<td><code>prp_list_ctx.v</code></td>
+<td>按 CID 保存 PRP List 上下文：base page、extra pages、valid bit</td>
+</tr>
+<tr>
+<td><code>prp_cq_tlp.v</code></td>
+<td>解析 SSD 对 PRP List window 的 MemRd，提取 requester ID、tag、length、CID、entry index</td>
+</tr>
+<tr>
+<td><code>prp_cc_tlp.v</code></td>
+<td>根据 context 生成 PRP List entry payload，并组装 CplD TLP</td>
+</tr>
+<tr>
+<td><code>CQ_route.v</code></td>
+<td>按地址识别 PRP List window，把 SSD 发来的 PRP MemRd route 到 PRP 模块</td>
+</tr>
+<tr>
+<td><code>CC_round_robin.v</code></td>
+<td>把 PRP 返回的 completion 和 ASQ&#x2F;IOSQ&#x2F;MEM completion 一起仲裁到 PCIe CC 口</td>
+</tr>
+<tr>
+<td><code>SSD_pcie_us.v</code></td>
+<td>PCIe TLP route 汇聚层，连接 CQ_route、CC_round_robin 和 PRP TLP 接口</td>
+</tr>
+<tr>
+<td><code>SSD_ctl.v</code></td>
+<td>SSD 控制顶层，例化 <code>prp_ctl</code>，并把 PRP 计算结果送入 command_ctl</td>
+</tr>
+</tbody></table>
+<p>简化层级如下：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">SSD_ctl</span><br><span class="line">  ├─ prp_ctl</span><br><span class="line">  │   ├─ prp_command_cache</span><br><span class="line">  │   ├─ prp_core_calc</span><br><span class="line">  │   ├─ prp_cq_tlp</span><br><span class="line">  │   ├─ prp_list_ctx</span><br><span class="line">  │   └─ prp_cc_tlp</span><br><span class="line">  ├─ command_ctl</span><br><span class="line">  └─ SSD_pcie_us</span><br><span class="line">      ├─ CQ_route</span><br><span class="line">      └─ CC_round_robin</span><br></pre></td></tr></table></figure>
+
+<h2 id="8-3-PRP-模块总体数据流"><a href="#8-3-PRP-模块总体数据流" class="headerlink" title="8.3 PRP 模块总体数据流"></a>8.3 PRP 模块总体数据流</h2><p>PRP 模块有两条相对独立的数据流。</p>
+<p>第一条是命令提交前的 PRP 计算流：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">cmd_source_mux / init command</span><br><span class="line">-&gt; prp_command_cache</span><br><span class="line">-&gt; prp_core_calc 申请 CID 并计算 PRP</span><br><span class="line">-&gt; prp_list_ctx 写入 CID context</span><br><span class="line">-&gt; command_ctl 构造 512-bit NVMe SQE</span><br><span class="line">-&gt; nvme_queue_ctl 写入 ASQ / IOSQ</span><br></pre></td></tr></table></figure>
+
+<p>第二条是 SSD 执行命令过程中读取 PRP List 的服务流：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">SSD 发出 MemRd(PRP List address)</span><br><span class="line">-&gt; PCIe CQ</span><br><span class="line">-&gt; CQ_route 命中 PRP window</span><br><span class="line">-&gt; prp_cq_tlp 解析 TLP header</span><br><span class="line">-&gt; prp_list_ctx 根据 CID/index 查 context</span><br><span class="line">-&gt; prp_cc_tlp 生成 CplD payload</span><br><span class="line">-&gt; CC_round_robin 仲裁到 PCIe CC</span><br><span class="line">-&gt; SSD 得到 PRP entry 后继续访问 data buffer</span><br></pre></td></tr></table></figure>
+
+<p>这两条路径的关键联系是 CID。<code>prp_core_calc</code> 计算命令 PRP 时拿到 CID，并把 CID 对应的 PRP List context 写入 <code>prp_list_ctx</code>；SSD 后续读取 PRP List 时，地址中也带着这个 CID 的窗口偏移，因此 PRP 模块可以重新定位到对应命令。</p>
+<h2 id="8-4-当前有效地址与参数规划"><a href="#8-4-当前有效地址与参数规划" class="headerlink" title="8.4 当前有效地址与参数规划"></a>8.4 当前有效地址与参数规划</h2><p>当前 <code>ssd_top.v</code> 和 <code>SSD_ctl.v</code> 中与 PRP 相关的默认参数如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">parameter</span> MPS_SIZE          = <span class="number">4096</span>;</span><br><span class="line"><span class="keyword">parameter</span> LBA_DATA_SIZE     = <span class="number">512</span>;</span><br><span class="line"><span class="keyword">parameter</span> PRP_LIST_BASE_ADDR   = <span class="number">64&#x27;h0000_0000_9000_0000</span>;</span><br><span class="line"><span class="keyword">parameter</span> PRP_LIST_WINDOW_SIZE = <span class="number">64&#x27;h0000_0000_0200_0000</span>;</span><br><span class="line"><span class="keyword">parameter</span> PRP_COMMAND_CACHE_DEPTH = <span class="number">16</span>;</span><br></pre></td></tr></table></figure>
+
+<p>数据 memory window 目前按 64KB 规划：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">parameter</span> RD_MEMORY_ADDRESS  = <span class="number">32&#x27;h3000_2000</span>;</span><br><span class="line"><span class="keyword">parameter</span> WR_MEMORY_ADDRESS  = <span class="number">32&#x27;h3000_8000</span>;</span><br><span class="line"><span class="keyword">parameter</span> MEMORY_WINDOW_SIZE = <span class="number">64&#x27;h0000_0000_0001_0000</span>;</span><br></pre></td></tr></table></figure>
+
+<p>按当前配置，可以得到几个关键关系：</p>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>当前值</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>MPS_SIZE</code></td>
+<td>4096B</td>
+<td>PRP page size 默认 4KB</td>
+</tr>
+<tr>
+<td><code>LBA_DATA_SIZE</code></td>
+<td>512B</td>
+<td>一个 LBA 按 512B 计算</td>
+</tr>
+<tr>
+<td><code>PRP_LIST_BASE_ADDR</code></td>
+<td><code>0x9000_0000</code></td>
+<td>SSD 读取 PRP List 时访问的虚拟窗口起始地址</td>
+</tr>
+<tr>
+<td><code>PRP_LIST_WINDOW_SIZE</code></td>
+<td><code>0x0200_0000</code></td>
+<td>PRP List 总窗口 32MB</td>
+</tr>
+<tr>
+<td>单 CID PRP List window</td>
+<td>64KB</td>
+<td>由 <code>CID &lt;&lt; 16</code> 得到</td>
+</tr>
+<tr>
+<td>单 CID 最大 entry 数</td>
+<td>8192</td>
+<td>64KB &#x2F; 8B</td>
+</tr>
+<tr>
+<td>512 个 CID 总窗口</td>
+<td>32MB</td>
+<td>512 * 64KB</td>
+</tr>
+</tbody></table>
+<p>单个 CID 的 PRP List 地址公式是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">PRP list base for CID = PRP_LIST_BASE_ADDR + (CID &lt;&lt; 16)</span><br><span class="line">PRP entry address     = PRP_LIST_BASE_ADDR + (CID &lt;&lt; 16) + entry_index * 8</span><br></pre></td></tr></table></figure>
+
+<p>这个规划和 <code>ID_COUNT = 512</code> 是对齐的：每个 CID 分配 64KB PRP List window，512 个 CID 刚好覆盖 32MB。对于 4KB page，8192 个 PRP entry 可以描述大约 32MB 数据空间，对当前 16KB、64KB 级别测试是足够的。</p>
+<h2 id="8-5-prp-ctl-顶层职责"><a href="#8-5-prp-ctl-顶层职责" class="headerlink" title="8.5 prp_ctl 顶层职责"></a>8.5 prp_ctl 顶层职责</h2><p><code>prp_ctl.v</code> 是 PRP 子系统顶层，它同时接命令参数、CID 池接口、PRP List MemRd 请求和 CC completion 输出。</p>
+<p>它的命令输入端口来自 <code>cmd_source_mux</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">1</span>:<span class="number">0</span>]  i_command_type;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">7</span>:<span class="number">0</span>]  i_opcode;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] i_nsid;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] i_addr;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] i_lba;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>] i_length;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>        i_valid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>        i_ready;</span><br></pre></td></tr></table></figure>
+
+<p>其中 <code>i_length</code> 按 NVMe NLB zero-based 语义处理，也就是如果要传输 32 个 LBA，<code>i_length</code> 填 31。</p>
+<p><code>prp_ctl</code> 输出给 <code>command_ctl</code> 的是已经带上 PRP 和 CID 的命令字段：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">1</span>:<span class="number">0</span>]              o_command_type;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">7</span>:<span class="number">0</span>]              o_opcode;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>]             o_nsid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>]             o_prp1_cache;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>]             o_prp2;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>]             o_lba;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [<span class="number">15</span>:<span class="number">0</span>]             o_length;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [ID_WIDTH-<span class="number">1</span>:<span class="number">0</span>]     o_id;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                    o_valid;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                    o_ready;</span><br></pre></td></tr></table></figure>
+
+<p>这一路最终进入 <code>command_construct.v</code>，构造 NVMe SQE。</p>
+<p>PRP List 服务路径则通过 TLP 接口连接：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [TLP_DATA_WIDTH-<span class="number">1</span>:<span class="number">0</span>] rx_req_tlp_data;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span> [TLP_HDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>]  rx_req_tlp_hdr;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                     rx_req_tlp_valid;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                     rx_req_tlp_ready;</span><br><span class="line"></span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [TLP_DATA_WIDTH-<span class="number">1</span>:<span class="number">0</span>] tx_cpl_tlp_data;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span> [TLP_HDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>]  tx_cpl_tlp_hdr;</span><br><span class="line"><span class="keyword">output</span> <span class="keyword">wire</span>                     tx_cpl_tlp_valid;</span><br><span class="line"><span class="keyword">input</span>  <span class="keyword">wire</span>                     tx_cpl_tlp_ready;</span><br></pre></td></tr></table></figure>
+
+<p><code>prp_ctl</code> 内部核心例化关系可以压缩成下面这段：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">prp_command_cache u_prp_command_cache (...);</span><br><span class="line"></span><br><span class="line">prp_core_calc u_prp_core_calc (</span><br><span class="line">    <span class="variable">.id_requst</span>      (id_requst),</span><br><span class="line">    <span class="variable">.id_data_ready</span>  (id_data_ready),</span><br><span class="line">    <span class="variable">.id_data</span>        (id_data),</span><br><span class="line">    <span class="variable">.id_data_valid</span>  (id_data_valid),</span><br><span class="line">    <span class="variable">.o_prp1_cache</span>   (o_prp1_cache),</span><br><span class="line">    <span class="variable">.o_prp1_mem</span>     (o_prp1_mem),</span><br><span class="line">    <span class="variable">.o_prp_extra_pages</span>(o_prp_extra_pages),</span><br><span class="line">    <span class="variable">.o_prp2</span>         (o_prp2),</span><br><span class="line">    <span class="variable">.o_id</span>           (o_id)</span><br><span class="line">);</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> prp_ctx_wr_valid = o_prp_valid &amp;&amp; (o_prp_extra_pages &gt; <span class="number">32&#x27;d1</span>);</span><br><span class="line"></span><br><span class="line">prp_list_ctx u_prp_list_ctx (</span><br><span class="line">    <span class="variable">.ctx_wr_cid</span>            (o_id),</span><br><span class="line">    <span class="variable">.ctx_wr_base_page_addr</span> (o_prp1_mem),</span><br><span class="line">    <span class="variable">.ctx_wr_extra_pages</span>    (o_prp_extra_pages),</span><br><span class="line">    <span class="variable">.ctx_wr_valid</span>          (prp_ctx_wr_valid)</span><br><span class="line">);</span><br><span class="line"></span><br><span class="line">prp_cq_tlp u_prp_cq_tlp (...);</span><br><span class="line">prp_cc_tlp u_prp_cc_tlp (...);</span><br></pre></td></tr></table></figure>
+
+<p>这里有一个重要判断：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> prp_ctx_wr_valid = o_prp_valid &amp;&amp; (o_prp_extra_pages &gt; <span class="number">32&#x27;d1</span>);</span><br></pre></td></tr></table></figure>
+
+<p>也就是说，只有当命令跨越超过两个 page、<code>PRP2</code> 需要指向 PRP List 时，才写 <code>prp_list_ctx</code>。如果只跨两个 page，<code>PRP2</code> 直接填第二页地址，不需要 context。</p>
+<h2 id="8-6-PRP-命令缓存-prp-command-cache"><a href="#8-6-PRP-命令缓存-prp-command-cache" class="headerlink" title="8.6 PRP 命令缓存 prp_command_cache"></a>8.6 PRP 命令缓存 prp_command_cache</h2><p><code>prp_command_cache.v</code> 是命令参数 FIFO。它缓存的是计算 PRP 所需的字段：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> FIFO_WIDTH = <span class="number">2</span> + <span class="number">8</span> + <span class="number">32</span> + <span class="number">64</span> + <span class="number">64</span> + <span class="number">16</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> fifo_din = &#123;</span><br><span class="line">    i_command_type,</span><br><span class="line">    i_opcode,</span><br><span class="line">    i_nsid,</span><br><span class="line">    i_addr,</span><br><span class="line">    i_lba,</span><br><span class="line">    i_length</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>这 186 bit 对应：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>位宽</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>command_type</code></td>
+<td>2</td>
+<td>Admin 或 IO</td>
+</tr>
+<tr>
+<td><code>opcode</code></td>
+<td>8</td>
+<td>NVMe opcode</td>
+</tr>
+<tr>
+<td><code>nsid</code></td>
+<td>32</td>
+<td>Namespace ID</td>
+</tr>
+<tr>
+<td><code>addr</code></td>
+<td>64</td>
+<td>FPGA memory buffer 地址</td>
+</tr>
+<tr>
+<td><code>lba</code></td>
+<td>64</td>
+<td>SSD 侧起始 LBA</td>
+</tr>
+<tr>
+<td><code>length</code></td>
+<td>16</td>
+<td>NVMe NLB zero-based</td>
+</tr>
+</tbody></table>
+<p>FIFO 的写入握手如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> i_ready   = (used_count_reg &lt; DEPTH_VALUE) &amp;&amp; fifo_wr_ready;</span><br><span class="line"><span class="keyword">assign</span> push_fire = i_valid &amp;&amp; i_ready;</span><br><span class="line"><span class="keyword">assign</span> fifo_wr_en = push_fire;</span><br></pre></td></tr></table></figure>
+
+<p>读取侧没有直接把 FIFO 输出裸接到下游，而是做了一级 <code>output_word_reg</code>：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> output_slot_ready = !output_valid_reg || o_ready;</span><br><span class="line"><span class="keyword">assign</span> issue_fifo_read = (!read_pending_reg) &amp;&amp;</span><br><span class="line">                         output_slot_ready &amp;&amp;</span><br><span class="line">                         (!fifo_empty_int);</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (read_pending_reg &amp;&amp; fifo_valid) <span class="keyword">begin</span></span><br><span class="line">    output_word_reg  &lt;= fifo_dout;</span><br><span class="line">    output_valid_reg &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span> <span class="keyword">else</span> <span class="keyword">if</span> (o_ready) <span class="keyword">begin</span></span><br><span class="line">    output_valid_reg &lt;= <span class="number">1&#x27;b0</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这样做的原因是底层 <code>sync_fifo</code> 是 Standard 模式，不是完全组合的 FWFT 输出。<code>read_pending_reg</code> 用来吸收一次 FIFO read latency，保证下游看到的是稳定的 <code>o_valid/o_data</code>。</p>
+<p>这个 FIFO 对 PRP 模块很关键。PRP 计算需要申请 CID，CID 池不一定每拍都能返回 ID。如果没有这个缓存，上游命令输入就会直接被 PRP 计算状态机节奏限制住；加上 FIFO 后，短突发命令可以先进入缓存，后面再逐条计算 PRP。</p>
+<h2 id="8-7-CID-获取与-PRP-计算-prp-core-calc"><a href="#8-7-CID-获取与-PRP-计算-prp-core-calc" class="headerlink" title="8.7 CID 获取与 PRP 计算 prp_core_calc"></a>8.7 CID 获取与 PRP 计算 prp_core_calc</h2><p><code>prp_core_calc.v</code> 是 PRP 计算的核心。它的状态机只有三个状态：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> [<span class="number">3</span>:<span class="number">0</span>] IDLE     = <span class="number">4&#x27;d0</span>,</span><br><span class="line">                 GET_ID   = <span class="number">4&#x27;d1</span>,</span><br><span class="line">                 CALC_PRP = <span class="number">4&#x27;d2</span>;</span><br></pre></td></tr></table></figure>
+
+<p>状态流转可以按下面理解：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">IDLE:</span><br><span class="line">  等待 prp_command_cache 输出一条命令。</span><br><span class="line">  握手成功后锁存 command_type/opcode/nsid/addr/lba/length，并发起 id_requst。</span><br><span class="line"></span><br><span class="line">GET_ID:</span><br><span class="line">  等待 command_id_pool 返回 id_data。</span><br><span class="line">  拿到 CID 后计算 PRP1/PRP2/extra_pages，同时拉起 o_valid 和 o_prp_valid。</span><br><span class="line"></span><br><span class="line">CALC_PRP:</span><br><span class="line">  o_valid/o_ready 成功后，带 PRP 的命令送给 command_ctl。</span><br><span class="line">  o_prp_valid/o_prp_ready 成功后，PRP List context 写入完成。</span><br><span class="line">  两条输出都完成后回到 IDLE。</span><br></pre></td></tr></table></figure>
+
+<p>源码中的 ID 申请和命令锁存逻辑如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">IDLE: <span class="keyword">begin</span></span><br><span class="line">    i_ready_next = <span class="number">1&#x27;d1</span>;</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> (i_valid &amp;&amp; i_ready) <span class="keyword">begin</span></span><br><span class="line">        state_next = GET_ID;</span><br><span class="line">        id_requst_next = <span class="number">1&#x27;d1</span>;</span><br><span class="line"></span><br><span class="line">        i_command_type_next = i_command_type;</span><br><span class="line">        i_opcode_next       = i_opcode;</span><br><span class="line">        i_nsid_next         = i_nsid;</span><br><span class="line">        i_addr_next         = i_addr;</span><br><span class="line">        i_lba_next          = i_lba;</span><br><span class="line">        i_length_next       = i_length;</span><br><span class="line"></span><br><span class="line">        i_ready_next        = <span class="number">1&#x27;d0</span>;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>拿到 ID 后进入计算输出：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">GET_ID: <span class="keyword">begin</span></span><br><span class="line">    <span class="keyword">if</span> (id_data_ready) <span class="keyword">begin</span></span><br><span class="line">        <span class="keyword">if</span> (id_data_valid &amp;&amp; id_requst) <span class="keyword">begin</span></span><br><span class="line">            state_next = CALC_PRP;</span><br><span class="line">            id_data_next = id_data;</span><br><span class="line">            id_requst_next = <span class="number">1&#x27;d0</span>;</span><br><span class="line"></span><br><span class="line">            o_valid_next = <span class="number">1&#x27;d1</span>;</span><br><span class="line">            o_prp_valid_next = <span class="number">1&#x27;d1</span>;</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这里 <code>o_valid</code> 和 <code>o_prp_valid</code> 是两条不同输出：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>去向</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>o_valid</code></td>
+<td><code>command_ctl</code></td>
+<td>带 CID、PRP1、PRP2 的命令可用于构造 SQE</td>
+</tr>
+<tr>
+<td><code>o_prp_valid</code></td>
+<td><code>prp_list_ctx</code></td>
+<td>PRP context 可以写入</td>
+</tr>
+</tbody></table>
+<p><code>CALC_PRP</code> 会分别等待两路 ready：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (o_valid &amp;&amp; o_ready) <span class="keyword">begin</span></span><br><span class="line">    cache_done_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    o_valid_next = <span class="number">1&#x27;b0</span>;</span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (o_prp_valid &amp;&amp; o_prp_ready) <span class="keyword">begin</span></span><br><span class="line">    mem_done_next = <span class="number">1&#x27;b1</span>;</span><br><span class="line">    o_prp_valid_next = <span class="number">1&#x27;b0</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这个结构保证了 command path 和 PRP context path 可以独立 backpressure。只要其中一路暂时不能接收，PRP 计算结果就会保持有效，不会丢失。</p>
+<h2 id="8-8-PRP1-PRP2-生成规则"><a href="#8-8-PRP1-PRP2-生成规则" class="headerlink" title="8.8 PRP1 &#x2F; PRP2 生成规则"></a>8.8 PRP1 &#x2F; PRP2 生成规则</h2><p>PRP 计算的输入有两个动态配置：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] cfg_prp_base_addr;</span><br><span class="line"><span class="keyword">input</span> <span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] cfg_prp_page_size;</span><br></pre></td></tr></table></figure>
+
+<p>为了避免仿真初期 X 态或配置为 0，源码中先做 safe value：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] prp_base_addr_safe =</span><br><span class="line">    ((^cfg_prp_base_addr) === <span class="number">1&#x27;bx</span>) ? PRP_LIST_BASE_ADDR :</span><br><span class="line">                                      cfg_prp_base_addr;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] prp_page_size_safe =</span><br><span class="line">    (((^cfg_prp_page_size) === <span class="number">1&#x27;bx</span>) || (cfg_prp_page_size == <span class="number">32&#x27;d0</span>)) ?</span><br><span class="line">    MPS_SIZE : cfg_prp_page_size;</span><br></pre></td></tr></table></figure>
+
+<p>page size 再转换成 shift：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">5</span>:<span class="number">0</span>]  prp_page_shift    = page_shift_from_size(prp_page_size_safe);</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] prp_page_size_pow2 = <span class="number">32&#x27;d1</span> &lt;&lt; prp_page_shift;</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] page_offset_mask   = prp_page_size_64 - <span class="number">64&#x27;d1</span>;</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] page_base_addr     = i_addr_reg &amp; ~page_offset_mask;</span><br></pre></td></tr></table></figure>
+
+<p>传输字节数按 NVMe NLB zero-based 计算：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] io_transfer_bytes =</span><br><span class="line">    (&#123;<span class="number">16&#x27;d0</span>, i_length_reg&#125; + <span class="number">32&#x27;d1</span>) * LBA_DATA_SIZE;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> is_io_rw_command = (i_command_type_reg == <span class="number">2&#x27;d3</span>) &amp;&amp;</span><br><span class="line">                        ((i_opcode_reg == <span class="number">8&#x27;h01</span>) || (i_opcode_reg == <span class="number">8&#x27;h02</span>));</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] prp_transfer_bytes =</span><br><span class="line">    is_io_rw_command ? io_transfer_bytes : <span class="number">32&#x27;d0</span>;</span><br></pre></td></tr></table></figure>
+
+<p>这里限制了只有 IO Read &#x2F; IO Write 命令才按数据传输计算 PRP 长度。Admin 命令或非读写 IO 命令不会建立 PRP List context。</p>
+<p>跨页判断和 extra page 计算如下：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] first_page_bytes = prp_page_size_pow2 - page_offset_bytes;</span><br><span class="line"><span class="keyword">wire</span>        is_cross_page    = (prp_transfer_bytes &gt; first_page_bytes);</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] rem_bytes        = is_cross_page ?</span><br><span class="line">                               (prp_transfer_bytes - first_page_bytes) : <span class="number">32&#x27;d0</span>;</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] extra_pages      =</span><br><span class="line">    (rem_bytes + prp_page_size_pow2 - <span class="number">1</span>) &gt;&gt; prp_page_shift;</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] next_page_addr   = page_base_addr + prp_page_size_64;</span><br></pre></td></tr></table></figure>
+
+<p>最终 PRP1、PRP2 生成规则是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] calc_prp1_cache = i_addr_reg;</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] calc_prp1_mem   = page_base_addr;</span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] calc_prp_extra_pages = extra_pages;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] calc_prp2 =</span><br><span class="line">    (!is_cross_page)      ? <span class="number">64&#x27;d0</span> :</span><br><span class="line">    (extra_pages == <span class="number">32&#x27;d1</span>)? next_page_addr :</span><br><span class="line">    (prp_base_addr_safe + &#123;&#123;(<span class="number">64</span>-ID_WIDTH-<span class="number">16</span>)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, calc_id_data, <span class="number">16&#x27;d0</span>&#125;);</span><br></pre></td></tr></table></figure>
+
+<p>这里要特别区分 <code>o_prp1_cache</code> 和 <code>o_prp1_mem</code>：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>使用位置</th>
+<th>是否保留原始 offset</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>o_prp1_cache</code></td>
+<td>输出给 command_ctl</td>
+<td>保留</td>
+<td>SQE 中真正写入 PRP1 的地址</td>
+</tr>
+<tr>
+<td><code>o_prp1_mem</code></td>
+<td>写入 prp_list_ctx</td>
+<td>不保留，按 page 对齐</td>
+<td>后续 PRP List entry 生成的 base page</td>
+</tr>
+</tbody></table>
+<p>这个区分是为了处理非 page 对齐 buffer。NVMe 允许 PRP1 带 page offset，PRP2 和 PRP List entry 必须指向后续 page 边界。比如 buffer 从 <code>0x3000_2100</code> 开始，PRP1 应该是 <code>0x3000_2100</code>，但 PRP List context 的 base page 应该是 <code>0x3000_2000</code>，后续 entry 才能按 <code>base + N * page_size</code> 生成。</p>
+<p>PRP2 的三种情况如下：</p>
+<table>
+<thead>
+<tr>
+<th>情况</th>
+<th>条件</th>
+<th>PRP2</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>不跨页</td>
+<td><code>!is_cross_page</code></td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td>只多出 1 个 page</td>
+<td><code>extra_pages == 1</code></td>
+<td>第二页起始地址</td>
+</tr>
+<tr>
+<td>多出超过 1 个 page</td>
+<td><code>extra_pages &gt; 1</code></td>
+<td>PRP List 地址：<code>base + (CID &lt;&lt; 16)</code></td>
+</tr>
+</tbody></table>
+<p>这就是当前连续 buffer 模型的核心逻辑。</p>
+<h2 id="8-9-PRP-List-上下文-prp-list-ctx"><a href="#8-9-PRP-List-上下文-prp-list-ctx" class="headerlink" title="8.9 PRP List 上下文 prp_list_ctx"></a>8.9 PRP List 上下文 prp_list_ctx</h2><p>当 <code>extra_pages &gt; 1</code> 时，<code>prp_ctl</code> 会把 context 写进 <code>prp_list_ctx</code>。该模块内部按 CID 建两张 RAM 和一张 valid bit 表：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">(* ram_style = <span class="string">&quot;block&quot;</span> *) <span class="keyword">reg</span> [<span class="number">63</span>:<span class="number">0</span>] base_page_mem [<span class="number">0</span>:ID_COUNT-<span class="number">1</span>];</span><br><span class="line">(* ram_style = <span class="string">&quot;block&quot;</span> *) <span class="keyword">reg</span> [<span class="number">31</span>:<span class="number">0</span>] extra_pages_mem [<span class="number">0</span>:ID_COUNT-<span class="number">1</span>];</span><br><span class="line"><span class="keyword">reg</span> valid_mem [<span class="number">0</span>:ID_COUNT-<span class="number">1</span>];</span><br></pre></td></tr></table></figure>
+
+<p>写入时使用 CID 的低位作为索引：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [ID_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>] ctx_wr_index = ctx_wr_cid[ID_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>];</span><br><span class="line"></span><br><span class="line"><span class="keyword">if</span> (ctx_wr_valid &amp;&amp; ctx_wr_ready) <span class="keyword">begin</span></span><br><span class="line">    base_page_mem[ctx_wr_index]   &lt;= ctx_wr_base_page_addr;</span><br><span class="line">    extra_pages_mem[ctx_wr_index] &lt;= ctx_wr_extra_pages;</span><br><span class="line">    valid_mem[ctx_wr_index]       &lt;= <span class="number">1&#x27;b1</span>;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p><code>ctx_wr_ready</code> 当前固定为 1：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> ctx_wr_ready = <span class="number">1&#x27;b1</span>;</span><br></pre></td></tr></table></figure>
+
+<p>原因是 context 写入是按 CID 索引的一拍 RAM 写，没有额外排队资源。当前 CID 不会在上一条命令未释放前重复分配，因此新命令写同一 CID 时天然表示旧 context 生命周期已经结束，不需要额外清零。</p>
+<p>SSD 读取 PRP List 时，<code>prp_list_ctx</code> 根据 <code>req_cid</code> 和 <code>req_entry_index</code> 查表：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [ID_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>] req_index = req_cid[ID_ADDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>];</span><br><span class="line"><span class="keyword">wire</span> req_cid_in_range = req_cid &lt; ID_COUNT;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">31</span>:<span class="number">0</span>] lookup_entry_index_32 =</span><br><span class="line">    &#123;&#123;(<span class="number">32</span>-PRP_ENTRY_INDEX_WIDTH)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, lookup_entry_index_reg&#125;;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> lookup_entry_in_range =</span><br><span class="line">    lookup_entry_index_32 &lt; lookup_extra_pages_reg;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> lookup_ctx_ok = lookup_cid_in_range_reg &amp;&amp;</span><br><span class="line">                     lookup_ctx_valid_reg &amp;&amp;</span><br><span class="line">                     lookup_entry_in_range;</span><br></pre></td></tr></table></figure>
+
+<p>返回 entry 的地址公式是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] lookup_entry_offset =</span><br><span class="line">    (&#123;&#123;(<span class="number">64</span>-PRP_ENTRY_INDEX_WIDTH)&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, lookup_entry_index_reg&#125; + <span class="number">64&#x27;d1</span>)</span><br><span class="line">    &lt;&lt; lookup_page_shift_reg;</span><br><span class="line"></span><br><span class="line">cc_tx_prp1_reg &lt;= lookup_ctx_ok ?</span><br><span class="line">                  (lookup_base_page_reg + lookup_entry_offset) :</span><br><span class="line">                  <span class="number">64&#x27;d0</span>;</span><br></pre></td></tr></table></figure>
+
+<p>这里 <code>entry_index + 1</code> 很关键。因为：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">PRP1 已经描述 page0；</span><br><span class="line">PRP List entry0 应该返回 page1；</span><br><span class="line">PRP List entry1 应该返回 page2；</span><br></pre></td></tr></table></figure>
+
+<p>所以 PRP List entry 地址是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">entry0 = base_page + 1 * page_size</span><br><span class="line">entry1 = base_page + 2 * page_size</span><br><span class="line">entry2 = base_page + 3 * page_size</span><br></pre></td></tr></table></figure>
+
+<p>如果 CID 无效、context 未写入或 entry 越界，当前模块返回 <code>64&#39;d0</code>，并且 <code>cc_tx_entry_count</code> 为 0。这样至少不会返回随机地址。</p>
+<h2 id="8-10-SSD-读取-PRP-List-的-CQ-CC-路径"><a href="#8-10-SSD-读取-PRP-List-的-CQ-CC-路径" class="headerlink" title="8.10 SSD 读取 PRP List 的 CQ&#x2F;CC 路径"></a>8.10 SSD 读取 PRP List 的 CQ&#x2F;CC 路径</h2><p>当命令需要 PRP List 时，SQE 中的 PRP2 不是数据页地址，而是 PRP List 地址。SSD 会对这个地址发起 PCIe MemRd。PRP 模块内部由 <code>prp_cq_tlp.v</code> 解析这个 MemRd。</p>
+<p><code>prp_cq_tlp</code> 主要解析这些字段：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> tx_length     = rx_req_tlp_hdr[<span class="number">105</span>:<span class="number">96</span>];</span><br><span class="line"><span class="keyword">assign</span> tx_byte_count = &#123;tx_length, <span class="number">2&#x27;b00</span>&#125;;</span><br><span class="line"><span class="keyword">assign</span> tx_req_id     = rx_req_tlp_hdr[<span class="number">95</span>:<span class="number">80</span>];</span><br><span class="line"><span class="keyword">assign</span> tx_tag        = rx_req_tlp_hdr[<span class="number">79</span>:<span class="number">72</span>];</span><br><span class="line"><span class="keyword">assign</span> tx_lower_addr = rx_req_tlp_hdr[<span class="number">6</span>:<span class="number">0</span>];</span><br></pre></td></tr></table></figure>
+
+<p>其中 <code>tx_req_id</code> 和 <code>tx_tag</code> 必须原样带回 completion header，这样 SSD 才能把 CplD 和自己发出的 MemRd 对上。</p>
+<p>地址解析同时兼容 3DW&#x2F;4DW header：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">2</span>:<span class="number">0</span>] req_fmt = rx_req_tlp_hdr[<span class="number">127</span>:<span class="number">125</span>];</span><br><span class="line"><span class="keyword">wire</span>       req_4dw = req_fmt[<span class="number">0</span>];</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] req_addr = req_4dw ?</span><br><span class="line">    &#123;rx_req_tlp_hdr[<span class="number">63</span>:<span class="number">32</span>], rx_req_tlp_hdr[<span class="number">31</span>:<span class="number">2</span>], <span class="number">2&#x27;b00</span>&#125; :</span><br><span class="line">    &#123;<span class="number">32&#x27;d0</span>, rx_req_tlp_hdr[<span class="number">31</span>:<span class="number">2</span>], <span class="number">2&#x27;b00</span>&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>然后根据 PRP base 反推出 CID 和 entry index：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] req_prp_offset =</span><br><span class="line">    (req_addr &gt;= prp_base_addr_safe) ? (req_addr - prp_base_addr_safe) : <span class="number">64&#x27;d0</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> i_tlp_id          = req_prp_offset[<span class="number">16</span> +: ID_WIDTH];</span><br><span class="line"><span class="keyword">assign</span> i_tlp_entry_index = req_prp_offset[<span class="number">3</span> +: PRP_ENTRY_INDEX_WIDTH];</span><br></pre></td></tr></table></figure>
+
+<p>这个位切片和前面的地址规划是一一对应的：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">bit[2:0]      = 8B entry 内部偏移</span><br><span class="line">bit[15:3]     = entry index</span><br><span class="line">bit[31:16]    = CID</span><br><span class="line">base + CID&lt;&lt;16 = 单 CID 64KB window</span><br></pre></td></tr></table></figure>
+
+<p>查询到 context 后，<code>prp_cc_tlp.v</code> 负责生成 completion。它把 64-bit PRP entry 填进 CplD payload：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> MAX_PRP_ENTRIES_PER_BEAT = TLP_DATA_WIDTH/<span class="number">64</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">function</span> [TLP_DATA_WIDTH-<span class="number">1</span>:<span class="number">0</span>] build_payload;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">63</span>:<span class="number">0</span>] base_prp;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">31</span>:<span class="number">0</span>] start_entry;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">31</span>:<span class="number">0</span>] valid_entry_count;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">5</span>:<span class="number">0</span>]  page_shift;</span><br><span class="line">    <span class="keyword">integer</span> i;</span><br><span class="line">    <span class="keyword">reg</span> [<span class="number">31</span>:<span class="number">0</span>] entry_global;</span><br><span class="line">    <span class="keyword">reg</span> [<span class="number">63</span>:<span class="number">0</span>] entry_addr;</span><br><span class="line">    <span class="keyword">begin</span></span><br><span class="line">        build_payload = &#123;TLP_DATA_WIDTH&#123;<span class="number">1&#x27;b0</span>&#125;&#125;;</span><br><span class="line">        <span class="keyword">for</span> (i = <span class="number">0</span>; i &lt; MAX_PRP_ENTRIES_PER_BEAT; i = i + <span class="number">1</span>) <span class="keyword">begin</span></span><br><span class="line">            entry_global = start_entry + i;</span><br><span class="line">            entry_addr = base_prp + (&#123;&#123;<span class="number">32</span>&#123;<span class="number">1&#x27;b0</span>&#125;&#125;, entry_global&#125; &lt;&lt; page_shift);</span><br><span class="line">            <span class="keyword">if</span> (entry_global &lt; valid_entry_count) <span class="keyword">begin</span></span><br><span class="line">                build_payload[i*<span class="number">64</span> +: <span class="number">64</span>] = entry_addr;</span><br><span class="line">            <span class="keyword">end</span></span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">endfunction</span></span><br></pre></td></tr></table></figure>
+
+<p>当前 TLP 数据宽度是 256 bit，因此一拍最多返回 4 个 64-bit PRP entry：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">256 bit / 64 bit = 4 entries per beat</span><br></pre></td></tr></table></figure>
+
+<p>completion header 由 <code>build_hdr</code> 生成：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">function</span> [TLP_SEG_COUNT*TLP_HDR_WIDTH-<span class="number">1</span>:<span class="number">0</span>] build_hdr;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">15</span>:<span class="number">0</span>] req_id;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">7</span>:<span class="number">0</span>]  tag;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">6</span>:<span class="number">0</span>]  lower_addr;</span><br><span class="line">    <span class="keyword">input</span> [<span class="number">9</span>:<span class="number">0</span>]  total_length;</span><br><span class="line">    <span class="keyword">begin</span></span><br><span class="line">        build_hdr = &#123;</span><br><span class="line">            TLP_TYPE_CPLD[<span class="number">7</span>:<span class="number">5</span>],</span><br><span class="line">            TLP_TYPE_CPLD[<span class="number">4</span>:<span class="number">0</span>],</span><br><span class="line">            ...</span><br><span class="line">            COMPLETER_ID,</span><br><span class="line">            <span class="number">3&#x27;b000</span>,</span><br><span class="line">            <span class="number">1&#x27;b0</span>,</span><br><span class="line">            &#123;total_length, <span class="number">2&#x27;b00</span>&#125;,</span><br><span class="line">            req_id,</span><br><span class="line">            tag,</span><br><span class="line">            <span class="number">1&#x27;b0</span>,</span><br><span class="line">            lower_addr,</span><br><span class="line">            <span class="number">32&#x27;d0</span></span><br><span class="line">        &#125;;</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">endfunction</span></span><br></pre></td></tr></table></figure>
+
+<p>对 PRP List 读取来说，SSD 关心的是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">1. CplD header 中 requester ID/tag 能匹配原 MemRd；</span><br><span class="line">2. byte count / lower address 合法；</span><br><span class="line">3. payload 中按顺序返回 PRP entry；</span><br><span class="line">4. valid/sop/eop/strb 和 PCIe IP 的 CC 口时序匹配。</span><br></pre></td></tr></table></figure>
+
+<h2 id="8-11-与-CQ-route-和-CC-round-robin-的连接"><a href="#8-11-与-CQ-route-和-CC-round-robin-的连接" class="headerlink" title="8.11 与 CQ_route 和 CC_round_robin 的连接"></a>8.11 与 CQ_route 和 CC_round_robin 的连接</h2><p>PRP List window 是通过 <code>CQ_route.v</code> 做地址命中的。<code>CQ_route</code> 中保留了 memory window 和 PRP window 两套动态配置：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] memory_base_addr_safe =</span><br><span class="line">    ((^cfg_memory_base_addr) === <span class="number">1&#x27;bx</span>) ? &#123;<span class="number">32&#x27;d0</span>, MEMORY_BASE_ADDRESS&#125; :</span><br><span class="line">                                         cfg_memory_base_addr;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] prp_base_addr_safe =</span><br><span class="line">    ((^cfg_prp_base_addr) === <span class="number">1&#x27;bx</span>) ? PRP_LIST_BASE_ADDR :</span><br><span class="line">                                      cfg_prp_base_addr;</span><br><span class="line"></span><br><span class="line"><span class="keyword">wire</span> [<span class="number">63</span>:<span class="number">0</span>] prp_window_size_safe =</span><br><span class="line">    ((^cfg_prp_window_size) === <span class="number">1&#x27;bx</span>) ? PRP_LIST_WINDOW_SIZE :</span><br><span class="line">                                        cfg_prp_window_size;</span><br></pre></td></tr></table></figure>
+
+<p>PRP 命中条件是：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">wire</span> hit_prp_addr = (tlp_addr &gt;= prp_base_addr_safe) &amp;&amp;</span><br><span class="line">    ((tlp_addr - prp_base_addr_safe) &lt; prp_window_size_safe);</span><br><span class="line"></span><br><span class="line">hit_prp_next = hit_prp_addr &amp;&amp; is_mem_rd;</span><br></pre></td></tr></table></figure>
+
+<p>route 目标中 <code>TARGET_PRP</code> 被分配为 8：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">localparam</span> TARGET_PRP = <span class="number">4&#x27;d8</span>;</span><br><span class="line"></span><br><span class="line"><span class="keyword">assign</span> PRP_rx_req_tlp_valid = pipe_valid &amp;&amp; (r_target_reg == TARGET_PRP);</span><br><span class="line"><span class="keyword">assign</span> PRP_rx_req_tlp_data  = r_data;</span><br><span class="line"><span class="keyword">assign</span> PRP_rx_req_tlp_hdr   = r_hdr;</span><br><span class="line"><span class="keyword">assign</span> PRP_rx_req_tlp_sop   = r_sop;</span><br><span class="line"><span class="keyword">assign</span> PRP_rx_req_tlp_eop   = r_eop;</span><br></pre></td></tr></table></figure>
+
+<p>因此 SSD 对 <code>0x9000_0000 + CID&lt;&lt;16 + index*8</code> 的 MemRd 会被送到 <code>prp_ctl</code>，不会进入普通 memory read 模块。</p>
+<p>PRP 返回的 CplD 进入 <code>CC_round_robin.v</code>。当前 CC 汇聚有 4 路：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">assign</span> request_raw[<span class="number">0</span>] = |ASQ_tx_cpl_tlp_valid;</span><br><span class="line"><span class="keyword">assign</span> request_raw[<span class="number">1</span>] = |IOSQ_tx_cpl_tlp_valid;</span><br><span class="line"><span class="keyword">assign</span> request_raw[<span class="number">2</span>] = |PRP_tx_cpl_tlp_valid;</span><br><span class="line"><span class="keyword">assign</span> request_raw[<span class="number">3</span>] = |MEM_tx_cpl_tlp_valid;</span><br></pre></td></tr></table></figure>
+
+<p>当 grant[2] 有效时，PRP completion 被转到 PCIe CC 口：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">grant[<span class="number">2</span>]: <span class="keyword">begin</span></span><br><span class="line">    tx_cpl_tlp_data  = PRP_tx_cpl_tlp_data;</span><br><span class="line">    tx_cpl_tlp_strb  = PRP_tx_cpl_tlp_strb;</span><br><span class="line">    tx_cpl_tlp_hdr   = PRP_tx_cpl_tlp_hdr;</span><br><span class="line">    tx_cpl_tlp_valid = &#123;TLP_SEG_COUNT&#123;grant_valid&#125;&#125; &amp; PRP_tx_cpl_tlp_valid;</span><br><span class="line">    tx_cpl_tlp_sop   = PRP_tx_cpl_tlp_sop;</span><br><span class="line">    tx_cpl_tlp_eop   = PRP_tx_cpl_tlp_eop;</span><br><span class="line"></span><br><span class="line">    PRP_tx_cpl_tlp_ready = tx_cpl_tlp_ready;</span><br><span class="line"><span class="keyword">end</span></span><br></pre></td></tr></table></figure>
+
+<p>这条路径说明了 PRP List 服务并不是走 AXI RAM，而是走独立的虚拟 PRP window：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">CQ_route: PRP MemRd -&gt; prp_ctl</span><br><span class="line">CC_round_robin: prp_ctl CplD -&gt; PCIe CC</span><br></pre></td></tr></table></figure>
+
+<h2 id="8-12-与-Command、AXI-Lite、Memory-模块的关系"><a href="#8-12-与-Command、AXI-Lite、Memory-模块的关系" class="headerlink" title="8.12 与 Command、AXI-Lite、Memory 模块的关系"></a>8.12 与 Command、AXI-Lite、Memory 模块的关系</h2><p>PRP 模块和 Command 模块的关系主要有三点。</p>
+<p>第一，PRP 模块先申请 CID，再把 CID 和 PRP 一起交给 command_ctl：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.id_requst</span>      (id_requst),</span><br><span class="line"><span class="variable">.id_data_ready</span>  (id_data_ready),</span><br><span class="line"><span class="variable">.id_data</span>        (id_data),</span><br><span class="line"><span class="variable">.id_data_valid</span>  (id_data_valid),</span><br><span class="line"></span><br><span class="line"><span class="variable">.o_prp1_cache</span>   (o_prp1_cache),</span><br><span class="line"><span class="variable">.o_prp2</span>         (o_prp2),</span><br><span class="line"><span class="variable">.o_id</span>           (o_id),</span><br><span class="line"><span class="variable">.o_valid</span>        (o_valid),</span><br><span class="line"><span class="variable">.o_ready</span>        (o_ready)</span><br></pre></td></tr></table></figure>
+
+<p>第二，<code>command_ctl.v</code> 构造 SQE 时使用的是 <code>o_prp1_cache</code> 和 <code>o_prp2</code>。<code>o_prp1_cache</code> 保留原始 buffer 地址 offset，适合直接写入 SQE 的 PRP1。</p>
+<p>第三，CID 的生命周期仍由 Command 模块记录和回收。PRP 模块只在命令发出前用 CID 建 context，不负责 completion 匹配。</p>
+<p>AXI-Lite 对 PRP 的影响主要是动态配置寄存器。<code>nvme_axil_regs.v</code> 中相关寄存器如下：</p>
+<table>
+<thead>
+<tr>
+<th>地址</th>
+<th>寄存器</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0x510</code></td>
+<td><code>REG_PRP_BASE_LO_SHADOW</code></td>
+<td>PRP List base 低 32 位 shadow</td>
+</tr>
+<tr>
+<td><code>0x514</code></td>
+<td><code>REG_PRP_BASE_HI_SHADOW</code></td>
+<td>PRP List base 高 32 位 shadow</td>
+</tr>
+<tr>
+<td><code>0x518</code></td>
+<td><code>REG_PRP_WINDOW_LO_SHADOW</code></td>
+<td>PRP window size 低 32 位 shadow</td>
+</tr>
+<tr>
+<td><code>0x51c</code></td>
+<td><code>REG_PRP_WINDOW_HI_SHADOW</code></td>
+<td>PRP window size 高 32 位 shadow</td>
+</tr>
+<tr>
+<td><code>0x520</code></td>
+<td><code>REG_PRP_PAGE_SIZE_SHADOW</code></td>
+<td>PRP page size</td>
+</tr>
+<tr>
+<td><code>0x524</code></td>
+<td><code>REG_MEM_PRP_CFG_APPLY</code></td>
+<td>将 memory&#x2F;PRP shadow 配置应用到 active</td>
+</tr>
+<tr>
+<td><code>0x528</code></td>
+<td><code>REG_MEM_PRP_CFG_STATUS</code></td>
+<td>配置 apply 状态、busy error、idle 状态</td>
+</tr>
+</tbody></table>
+<p><code>SSD_ctl.v</code> 例化 <code>axi_lite_ctl</code> 时把默认值绑定到系统参数：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="variable">.RESET_MEMORY_WINDOW_SIZE</span> (MEMORY_WINDOW_SIZE),</span><br><span class="line"><span class="variable">.RESET_PRP_BASE_ADDR</span>      (PRP_LIST_BASE_ADDR),</span><br><span class="line"><span class="variable">.RESET_PRP_WINDOW_SIZE</span>    (PRP_LIST_WINDOW_SIZE),</span><br><span class="line"><span class="variable">.RESET_PRP_PAGE_SIZE</span>      (MPS_SIZE)</span><br></pre></td></tr></table></figure>
+
+<p>配置输出再分别送到 PRP 和 CQ_route：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// prp_ctl</span></span><br><span class="line"><span class="variable">.cfg_prp_base_addr</span> (axil_prp_base_addr),</span><br><span class="line"><span class="variable">.cfg_prp_page_size</span> (axil_prp_page_size),</span><br><span class="line"></span><br><span class="line"><span class="comment">// SSD_pcie_us / CQ_route</span></span><br><span class="line"><span class="variable">.cfg_prp_base_addr</span>   (axil_prp_base_addr),</span><br><span class="line"><span class="variable">.cfg_prp_window_size</span> (axil_prp_window_size)</span><br></pre></td></tr></table></figure>
+
+<p>因此：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">prp_core_calc 使用 cfg_prp_base_addr 计算 PRP2；</span><br><span class="line">prp_cq_tlp 使用 cfg_prp_base_addr 解码 SSD 的 PRP List 读请求；</span><br><span class="line">CQ_route 使用 cfg_prp_base_addr/cfg_prp_window_size 判断地址是否命中 PRP window；</span><br><span class="line">prp_list_ctx/prp_cc_tlp 使用 cfg_prp_page_size 生成后续 page 地址。</span><br></pre></td></tr></table></figure>
+
+<p>Memory 模块则负责真正的数据 buffer。PRP 只告诉 SSD 数据在哪，SSD 后续读写数据时访问的是 memory window，例如当前：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">数据 buffer window: 0x3000_2000 起，64KB</span><br><span class="line">PRP List window : 0x9000_0000 起，32MB</span><br></pre></td></tr></table></figure>
+
+<p>两个 window 不能重叠。因为 <code>CQ_route.v</code> 里 memory 命中和 PRP 命中都按地址判断，如果地址规划重叠，就会带来 route 优先级问题。当前配置下两者相距很远，不存在冲突。</p>
+<h2 id="8-13-16KB-顺序读写示例"><a href="#8-13-16KB-顺序读写示例" class="headerlink" title="8.13 16KB 顺序读写示例"></a>8.13 16KB 顺序读写示例</h2><p>当前板级测试常用 16KB 读写闭环。假设 page size 为 4KB，LBA size 为 512B：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">transfer bytes = 16KB = 16384 bytes</span><br><span class="line">LBA count      = 16384 / 512 = 32</span><br><span class="line">NVMe NLB       = 32 - 1 = 31</span><br><span class="line">page count     = 16384 / 4096 = 4</span><br></pre></td></tr></table></figure>
+
+<p>如果 source buffer 从 <code>0x3000_2000</code> 开始，并且地址 4KB 对齐，则：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">page0 = 0x3000_2000</span><br><span class="line">page1 = 0x3000_3000</span><br><span class="line">page2 = 0x3000_4000</span><br><span class="line">page3 = 0x3000_5000</span><br></pre></td></tr></table></figure>
+
+<p><code>prp_core_calc</code> 的结果应该是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">PRP1 = 0x3000_2000</span><br><span class="line">extra_pages = 3</span><br><span class="line">PRP2 = 0x9000_0000 + (CID &lt;&lt; 16)</span><br></pre></td></tr></table></figure>
+
+<p>因为 <code>extra_pages = 3</code>，超过 1，所以 PRP2 指向 PRP List，而不是直接指向第二页。</p>
+<p>假设 CID 为 17，则 PRP List base 是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">PRP2 = 0x9000_0000 + 17 * 0x10000</span><br><span class="line">     = 0x9001_1000</span><br></pre></td></tr></table></figure>
+
+<p>SSD 读取 PRP List 时会从这个地址附近发 MemRd。entry 对应关系如下：</p>
+<table>
+<thead>
+<tr>
+<th>SSD 读取地址</th>
+<th>CID</th>
+<th>entry index</th>
+<th>FPGA 返回</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>0x9001_1000</code></td>
+<td>17</td>
+<td>0</td>
+<td><code>0x3000_3000</code></td>
+</tr>
+<tr>
+<td><code>0x9001_1008</code></td>
+<td>17</td>
+<td>1</td>
+<td><code>0x3000_4000</code></td>
+</tr>
+<tr>
+<td><code>0x9001_1010</code></td>
+<td>17</td>
+<td>2</td>
+<td><code>0x3000_5000</code></td>
+</tr>
+</tbody></table>
+<p>这样 SSD 拿到的完整数据页地址就是：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">PRP1        -&gt; page0</span><br><span class="line">PRP List[0] -&gt; page1</span><br><span class="line">PRP List[1] -&gt; page2</span><br><span class="line">PRP List[2] -&gt; page3</span><br></pre></td></tr></table></figure>
+
+<p>如果 buffer 不是 4KB 对齐，例如从 <code>0x3000_2100</code> 开始，那么第一页可用字节数会变成：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">first_page_bytes = 4096 - 0x100 = 3840</span><br></pre></td></tr></table></figure>
+
+<p>PRP1 仍然保留原始地址：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">PRP1 = 0x3000_2100</span><br></pre></td></tr></table></figure>
+
+<p>但 context base 会使用 page base：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">base_page = 0x3000_2000</span><br></pre></td></tr></table></figure>
+
+<p>后续 PRP List entry 仍然从 <code>0x3000_3000</code>、<code>0x3000_4000</code> 开始生成。这就是源码中 <code>o_prp1_cache</code> 和 <code>o_prp1_mem</code> 分开的原因。</p>
+<h2 id="8-14-仿真验证覆盖点"><a href="#8-14-仿真验证覆盖点" class="headerlink" title="8.14 仿真验证覆盖点"></a>8.14 仿真验证覆盖点</h2><p>PRP 模块单独做过两个方向的 testbench：</p>
+<table>
+<thead>
+<tr>
+<th>TB 文件</th>
+<th>覆盖内容</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>tb_prp_ctl_board_sequence.v</code></td>
+<td>模拟板级顺序，检查 admin 命令不污染 PRP context，IO 16KB 命令写入 context，PRP List 读请求能返回预期 entry</td>
+</tr>
+<tr>
+<td><code>tb_prp_ctl_stress.v</code></td>
+<td>压力测试多 CID、多 entry index、不同 PRP List 读取位置、completion strb&#x2F;sop&#x2F;eop&#x2F;data 是否正确</td>
+</tr>
+</tbody></table>
+<p><code>tb_prp_ctl_board_sequence.v</code> 中按照 CID 构造 PRP List 读地址：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">req_addr_tmp = PRP_LIST_BASE_ADDR + &#123;<span class="number">32&#x27;d0</span>, cid, <span class="number">16&#x27;d0</span>&#125;</span><br><span class="line">             + (&#123;<span class="number">51&#x27;d0</span>, entry_index&#125; &lt;&lt; <span class="number">3</span>);</span><br></pre></td></tr></table></figure>
+
+<p>然后检查 completion payload：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">if</span> (tx_cpl_tlp_strb !== <span class="number">8&#x27;h0F</span>) fail(<span class="string">&quot;unexpected PRP completion strb&quot;</span>);</span><br><span class="line"><span class="keyword">if</span> (tx_cpl_tlp_data[<span class="number">63</span>:<span class="number">0</span>] !== exp0) fail(<span class="string">&quot;unexpected PRP entry0&quot;</span>);</span><br><span class="line"><span class="keyword">if</span> (tx_cpl_tlp_data[<span class="number">127</span>:<span class="number">64</span>] !== exp1) fail(<span class="string">&quot;unexpected PRP entry1&quot;</span>);</span><br></pre></td></tr></table></figure>
+
+<p><code>tb_prp_ctl_stress.v</code> 中的期望 entry 计算和 RTL 公式一致：</p>
+<figure class="highlight verilog"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">expected_entry = expected_base_page[cid]</span><br><span class="line">               + ((&#123;<span class="number">32&#x27;d0</span>, entry_index&#125; + <span class="number">64&#x27;d1</span>) * MPS_SIZE);</span><br></pre></td></tr></table></figure>
+
+<p>压力测试还会检查：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">1. PRP1 是否等于原始 buffer 地址；</span><br><span class="line">2. PRP2 是否等于直接第二页地址或 PRP List 地址；</span><br><span class="line">3. 需要 PRP List 的命令是否写入 context；</span><br><span class="line">4. 不需要 PRP List 的短命令是否没有污染 context；</span><br><span class="line">5. PRP completion 是否存在 X；</span><br><span class="line">6. 多拍 completion 的 SOP/EOP/STRB 是否正确。</span><br></pre></td></tr></table></figure>
+
+<p>这组 TB 主要验证 PRP 计算和 PRP List 服务。真正和 SSD、PCIe memory window 的闭环，需要在 <code>SSD_ctl</code> 级或上板 ILA 中继续观察：</p>
+<figure class="highlight text"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">PRP_rx_req_tlp_valid/ready/hdr</span><br><span class="line">PRP_tx_cpl_tlp_valid/ready/hdr/data</span><br><span class="line">MEM_RD/MEM_WR TLP valid/ready</span><br><span class="line">command_done_valid</span><br><span class="line">rw_write_cmd_done / rw_read_cmd_done</span><br><span class="line">rw_write_data_done / rw_read_data_done</span><br></pre></td></tr></table></figure>
+
+<h2 id="8-15-实现注意事项"><a href="#8-15-实现注意事项" class="headerlink" title="8.15 实现注意事项"></a>8.15 实现注意事项</h2><p>第一，PRP List window 和 memory window 要分开。当前 memory 数据窗口在 <code>0x3000_xxxx</code>，PRP List 虚拟窗口在 <code>0x9000_0000</code>，两者不会冲突。如果后续通过 AXI-Lite 改配置，也要保持二者不重叠。</p>
+<p>第二，<code>cfg_prp_page_size</code> 应该使用 NVMe CC.MPS 对应的 page size。当前默认 4096，对大多数 SSD 的 4KB MPS 配置是匹配的。如果后续初始化阶段改变 CC.MPS，AXI-Lite 的 <code>REG_PRP_PAGE_SIZE_SHADOW</code> 也要同步更新。</p>
+<p>第三，当前 PRP List 是连续 buffer 模型。它适合 FPGA 内部 AXI RAM 连续地址、顺序读写和固定测试窗口。如果未来要支持外部 host 侧任意离散物理页，就需要把 <code>prp_list_ctx</code> 从公式生成升级成真正的 PRP entry RAM 或 descriptor RAM。</p>
+<p>第四，CID context 依赖 CID 生命周期。只要 command_record 保证未完成命令的 CID 不被重复分配，PRP context 覆盖就是安全的。当前 context 不主动清零，是因为新命令复用 CID 时会覆盖旧内容；completion 后 CID 回收由 command 模块负责。</p>
+<p>第五，PRP completion 的 requester ID、tag、lower address 必须来自 SSD 原始 MemRd TLP。<code>prp_cq_tlp</code> 解析这些字段，<code>prp_cc_tlp</code> 原样放回 CplD header。这部分如果错位，SSD 会收不到匹配 completion，表现为写命令或读命令卡住。</p>
+<p>第六，<code>PRP_ENTRY_INDEX_WIDTH = 13</code> 对应每个 CID 8192 个 entry，也就是 64KB PRP List window。这个位宽要和 <code>CID &lt;&lt; 16</code> 的地址规划一起看，不能单独修改。如果要扩大单 CID PRP List window，需要同时调整地址切片和总 PRP window size。</p>
+<h2 id="8-16-章节总结"><a href="#8-16-章节总结" class="headerlink" title="8.16 章节总结"></a>8.16 章节总结</h2><p>PRP 模块在当前 SSD 控制器里承担的是“把 FPGA 内部连续数据 buffer 转换成 NVMe 可识别地址描述”的职责。命令提交前，<code>prp_core_calc</code> 申请 CID 并计算 PRP1&#x2F;PRP2；跨多页时，<code>prp_list_ctx</code> 保存 CID 到 base page&#x2F;extra pages 的上下文。SSD 执行命令后，如果需要读取 PRP List，<code>CQ_route</code> 会把对应 MemRd 转给 PRP 模块，<code>prp_cc_tlp</code> 按 context 动态返回 PRP entry。</p>
+<p>这一版 PRP 设计的重点不是做完整操作系统级页表，而是服务当前 FPGA 内部连续 buffer 的高速读写链路。它支持 4KB page 默认配置、NLB zero-based 字节数换算、跨页 PRP1&#x2F;PRP2 生成、按 CID 的虚拟 PRP List window，以及 SSD 对 PRP List 的 PCIe MemRd 响应。对当前 16KB 顺序读写闭环和后续更大连续 buffer 测试，这套结构已经覆盖了关键路径。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="https://seattlice.github.io/2026/05/21/fpga-nvme-host-08-prp-address/" data-id="cmpfilfhv000018i74y8k8hb1" data-title="FPGA NVMe Host 项目记录（八）：PRP 地址管理" class="article-share-link"><span class="fa fa-share">分享</span></a>
+      
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+  
+    <a href="/2026/05/21/fpga-nvme-host-07-queue-module/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">后一篇</strong>
+      <div class="article-nav-title">FPGA NVMe Host 项目记录（七）：Queue 模块设计</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">分类</h3>
+    <div class="widget">
+      <ul class="category-list"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/">FPGA</a><ul class="category-list-child"><li class="category-list-item"><a class="category-list-link" href="/categories/FPGA/PCIe/">PCIe</a></li></ul></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/FPGA/" rel="tag">FPGA</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/NVMe/" rel="tag">NVMe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/PCIe/" rel="tag">PCIe</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/RTL/" rel="tag">RTL</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Xilinx/" rel="tag">Xilinx</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">标签云</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/FPGA/" style="font-size: 20px;">FPGA</a> <a href="/tags/NVMe/" style="font-size: 20px;">NVMe</a> <a href="/tags/PCIe/" style="font-size: 20px;">PCIe</a> <a href="/tags/RTL/" style="font-size: 15px;">RTL</a> <a href="/tags/Xilinx/" style="font-size: 10px;">Xilinx</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">归档</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/05/">五月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2026/01/">一月 2026</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2025/09/">九月 2025</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">最新文章</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-08-prp-address/">FPGA NVMe Host 项目记录（八）：PRP 地址管理</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-07-queue-module/">FPGA NVMe Host 项目记录（七）：Queue 模块设计</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-06-command-module/">FPGA NVMe Host 项目记录（六）：Command 模块设计</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05a-pcie-dfs-enum/">FPGA NVMe Host 项目记录（五-A）：PCIe 深度优先枚举设计</a>
+          </li>
+        
+          <li>
+            <a href="/2026/05/21/fpga-nvme-host-05-init-queue/">FPGA NVMe Host 项目记录（五）：NVMe 初始化与队列建立</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      
+      &copy; 2026 LI HUALOU<br>
+      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+
+<script src="/js/jquery-3.6.4.min.js"></script>
+
+
+
+  
+<script src="/fancybox/jquery.fancybox.min.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+
+  </div>
+</body>
+</html>
